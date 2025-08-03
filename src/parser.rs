@@ -226,13 +226,13 @@ fn handle_start_event(
                 match reader.read_event_into(&mut text_buf)? {
                     Event::Text(text) => {
                         let value_str = text.unescape()?.into_owned();
-                        fact.value = parse_typed_value(&value_str, fact.decimals.as_deref());
+                        fact.value = parse_typed_value(&value_str);
                         // Consume the closing tag
                         reader.read_to_end_into(e.name(), &mut Vec::new())?;
                     }
                     Event::End(end_tag) if end_tag.name() == e.name() => {
-                        // Empty element (no text content)
-                        fact.value = XbrlValue::String("".to_string());
+                        // Empty element (no text content) is considered Nil
+                        fact.value = XbrlValue::Nil;
                     }
                     _ => {
                         // Complex content - skip for now
@@ -329,75 +329,26 @@ fn parse_fact_attributes(e: &BytesStart) -> (Fact, bool) {
     (fact, is_explicitly_nil)
 }
 
-/// Converts a string value to the appropriate typed XbrlValue
+/// Converts a string value to a basic XbrlValue.
 ///
-/// This function implements intelligent type inference for XBRL fact values,
-/// using context clues from the content and attributes to determine the most
-/// appropriate Rust type representation.
-///
-/// # Type Inference Logic
-///
-/// 1. **Numeric with decimals attribute**: Parse as f64 or i64 based on decimals value
-/// 2. **Boolean patterns**: "true"/"false", "yes"/"no" become Bool variants
-/// 3. **Numeric patterns**: Integer or decimal strings become numeric types
-/// 4. **Default**: All other content becomes String variant
+/// This function no longer performs aggressive type inference. It simply
+/// trims the string and wraps it in the XbrlValue::String variant. Empty or
+/// whitespace-only strings are considered Nil.
 ///
 /// # Arguments
 ///
 /// * `value_str` - The raw string value from XML content
-/// * `decimals` - Optional decimals attribute value for numeric interpretation
 ///
 /// # Returns
 ///
-/// * `XbrlValue` - Appropriately typed value representation
-///
-/// # Example
-///
-/// ```rust
-/// use xbrl::parser::parse_typed_value;
-///
-/// let monetary = parse_typed_value("1500000", Some("0"));      // XbrlValue::F64(1500000.0)
-/// let shares = parse_typed_value("1000000", Some("INF"));      // XbrlValue::I64(1000000)
-/// let flag = parse_typed_value("true", None);                  // XbrlValue::Bool(true)
-/// let text = parse_typed_value("See Note 1", None);            // XbrlValue::String("See Note 1")
-/// ```
-fn parse_typed_value(value_str: &str, decimals: Option<&str>) -> XbrlValue {
+/// * `XbrlValue` - A simple, untyped value representation.
+fn parse_typed_value(value_str: &str) -> XbrlValue {
     let trimmed_val = value_str.trim();
-
-    // Handle numeric values based on decimals attribute
-    if let Some(d) = decimals {
-        if d.eq_ignore_ascii_case("inf") {
-            // INF decimals indicates integer values (like share counts)
-            if let Ok(i) = trimmed_val.parse::<i64>() {
-                return XbrlValue::I64(i);
-            }
-        } else {
-            // Specific decimal precision indicates floating-point monetary values
-            if let Ok(f) = trimmed_val.parse::<f64>() {
-                return XbrlValue::F64(f);
-            }
-        }
+    if trimmed_val.is_empty() {
+        XbrlValue::Nil
+    } else {
+        XbrlValue::String(trimmed_val.to_string())
     }
-
-    // Handle boolean patterns (case-insensitive)
-    let lower_val = trimmed_val.to_lowercase();
-    if lower_val == "true" || lower_val == "yes" {
-        return XbrlValue::Bool(true);
-    }
-    if lower_val == "false" || lower_val == "no" {
-        return XbrlValue::Bool(false);
-    }
-
-    // Try parsing as number even without decimals attribute
-    if let Ok(f) = trimmed_val.parse::<f64>() {
-        return XbrlValue::F64(f);
-    }
-    if let Ok(i) = trimmed_val.parse::<i64>() {
-        return XbrlValue::I64(i);
-    }
-
-    // Default to string representation
-    XbrlValue::String(trimmed_val.to_string())
 }
 
 /// Reconstructs the complete XML string for a complex element
@@ -483,30 +434,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_typed_value_monetary() {
-        let result = parse_typed_value("1500000", Some("0"));
-        assert_eq!(result, XbrlValue::F64(1500000.0));
-    }
+    fn test_parse_typed_value() {
+        // Should preserve string content and trim whitespace
+        assert_eq!(
+            parse_typed_value("1500000"),
+            XbrlValue::String("1500000".to_string())
+        );
+        assert_eq!(
+            parse_typed_value("true"),
+            XbrlValue::String("true".to_string())
+        );
+        assert_eq!(
+            parse_typed_value("  See Note 1  "),
+            XbrlValue::String("See Note 1".to_string())
+        );
 
-    #[test]
-    fn test_parse_typed_value_shares() {
-        let result = parse_typed_value("1000000", Some("INF"));
-        assert_eq!(result, XbrlValue::I64(1000000));
-    }
-
-    #[test]
-    fn test_parse_typed_value_boolean() {
-        assert_eq!(parse_typed_value("true", None), XbrlValue::Bool(true));
-        assert_eq!(parse_typed_value("TRUE", None), XbrlValue::Bool(true));
-        assert_eq!(parse_typed_value("false", None), XbrlValue::Bool(false));
-        assert_eq!(parse_typed_value("yes", None), XbrlValue::Bool(true));
-        assert_eq!(parse_typed_value("no", None), XbrlValue::Bool(false));
-    }
-
-    #[test]
-    fn test_parse_typed_value_string() {
-        let result = parse_typed_value("See Note 1", None);
-        assert_eq!(result, XbrlValue::String("See Note 1".to_string()));
+        // Should treat empty or whitespace-only strings as Nil
+        assert_eq!(parse_typed_value(""), XbrlValue::Nil);
+        assert_eq!(parse_typed_value("   "), XbrlValue::Nil);
     }
 
     #[test]

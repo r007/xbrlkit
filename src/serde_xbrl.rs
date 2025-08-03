@@ -39,7 +39,7 @@
 
 use crate::error::{Result, XbrlError};
 use crate::structures::{Context, Fact, Period, Xbrl, XbrlValue};
-use serde::de::{self, Deserializer, IntoDeserializer, MapAccess, Visitor};
+use serde::de::{self, Deserializer, Error, IntoDeserializer, MapAccess, Visitor};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
@@ -60,7 +60,7 @@ pub struct XbrlDataContext {
 }
 
 impl XbrlDataContext {
-    /// Creates a new data context from parsed XBRL data.
+    /// Creates a new data context from parsed Xbrl data.
     /// This constructor performs the expensive initialization work of building
     /// indexes and caching contexts.
     pub fn new(xbrl: Xbrl) -> Self {
@@ -297,6 +297,9 @@ struct XbrlMapAccess<'a, 'b> {
     /// Iterator over field names to process
     field_iterator: Box<dyn Iterator<Item = &'static str> + 'a>,
 
+    /// Current field name, cached for rich error reporting
+    current_field: Option<&'static str>,
+
     /// Current fact value to be deserialized (set by next_key_seed)
     value: Option<&'b XbrlValue>,
 }
@@ -331,6 +334,7 @@ impl<'a, 'b> XbrlMapAccess<'a, 'b> {
         XbrlMapAccess {
             de,
             field_iterator,
+            current_field: None,
             value: None,
         }
     }
@@ -359,8 +363,9 @@ impl<'de, 'a, 'b> MapAccess<'de> for XbrlMapAccess<'a, 'b> {
         // Find the next field that we have data for
         while let Some(field) = self.field_iterator.next() {
             if let Some(fact) = self.de.context.find_best_fact(field) {
-                // We found a fact for this field - cache its value
+                // We found a fact for this field - cache its value and name
                 self.value = Some(&fact.value);
+                self.current_field = Some(field);
 
                 // Offer the field name as a key to the visitor
                 return seed.deserialize(field.into_deserializer()).map(Some);
@@ -397,47 +402,147 @@ impl<'de, 'a, 'b> MapAccess<'de> for XbrlMapAccess<'a, 'b> {
             .take()
             .expect("next_value_seed called without a successful next_key_seed");
 
+        let field_name = self
+            .current_field
+            .take()
+            .expect("current_field should be set by next_key_seed");
+
         seed.deserialize(ValueDeserializer {
             value: value.clone(),
+            field_name,
         })
     }
 }
 
-/// Deserializes individual XBRL fact values into appropriate Rust types
+/// Deserializes individual XBRL fact values into appropriate Rust types.
 ///
-/// This struct handles the conversion from `XbrlValue` enum variants to the
-/// specific types expected by target struct fields. It implements serde's
-/// type-directed deserialization pattern.
-///
-/// # Type Conversion Strategy
-///
-/// The deserializer maps XBRL value types to Rust types as follows:
-/// - `XbrlValue::String` → String types
-/// - `XbrlValue::Bool` → bool types  
-/// - `XbrlValue::F64` → floating-point types
-/// - `XbrlValue::I64` → integer types
-/// - `XbrlValue::Nil` → Option::None
-struct ValueDeserializer {
+/// This struct is the final stage of deserialization, responsible for converting
+/// the raw string value from an `XbrlValue` into the specific type requested by
+/// a struct field (e.g., `f64`, `bool`, `String`). It implements `serde`'s
+/// type-directed deserialization methods.
+struct ValueDeserializer<'a> {
     /// The XBRL value to be deserialized
     value: XbrlValue,
+    /// The name of the field being deserialized, for rich error messages
+    field_name: &'a str,
 }
 
-impl<'de> Deserializer<'de> for ValueDeserializer {
+impl<'de, 'a> Deserializer<'de> for ValueDeserializer<'a> {
     type Error = XbrlError;
 
     /// Deserializes the value based on its runtime type
-    ///
-    /// This method examines the `XbrlValue` variant and calls the appropriate
-    /// visitor method to perform type-safe conversion.
     fn deserialize_any<V>(self, visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
         match self.value {
+            XbrlValue::String(s) => {
+                // When the target type is unknown, attempt to parse in a reasonable order:
+                // bool -> i64 -> f64 -> string
+                let lower = s.to_lowercase();
+                if lower == "true" || lower == "yes" {
+                    return visitor.visit_bool(true);
+                }
+                if lower == "false" || lower == "no" {
+                    return visitor.visit_bool(false);
+                }
+                if let Ok(i) = s.parse::<i64>() {
+                    return visitor.visit_i64(i);
+                }
+                if let Ok(f) = s.parse::<f64>() {
+                    return visitor.visit_f64(f);
+                }
+                visitor.visit_string(s)
+            }
+            XbrlValue::Nil => visitor.visit_none(),
+        }
+    }
+
+    fn deserialize_string<V>(self, visitor: V) -> Result<V::Value>
+    where
+        V: Visitor<'de>,
+    {
+        match self.value {
             XbrlValue::String(s) => visitor.visit_string(s),
-            XbrlValue::Bool(b) => visitor.visit_bool(b),
-            XbrlValue::F64(f) => visitor.visit_f64(f),
-            XbrlValue::I64(i) => visitor.visit_i64(i),
+            XbrlValue::Nil => visitor.visit_none(),
+        }
+    }
+
+    fn deserialize_str<V>(self, visitor: V) -> Result<V::Value>
+    where
+        V: Visitor<'de>,
+    {
+        self.deserialize_string(visitor)
+    }
+
+    fn deserialize_i64<V>(self, visitor: V) -> Result<V::Value>
+    where
+        V: Visitor<'de>,
+    {
+        match self.value {
+            XbrlValue::String(s) => s
+                .replace(',', "")
+                .parse::<i64>()
+                .map_err(|_| {
+                    XbrlError::custom(format!(
+                        "For field '{}': {}",
+                        self.field_name,
+                        XbrlError::ValueConversion {
+                            value: s.clone(),
+                            target_type: "i64".to_string(),
+                        }
+                    ))
+                })
+                .and_then(|i| visitor.visit_i64(i)),
+            XbrlValue::Nil => visitor.visit_none(),
+        }
+    }
+
+    fn deserialize_f64<V>(self, visitor: V) -> Result<V::Value>
+    where
+        V: Visitor<'de>,
+    {
+        match self.value {
+            XbrlValue::String(s) => s
+                .replace(',', "")
+                .parse::<f64>()
+                .map_err(|_| {
+                    XbrlError::custom(format!(
+                        "For field '{}': {}",
+                        self.field_name,
+                        XbrlError::ValueConversion {
+                            value: s.clone(),
+                            target_type: "f64".to_string(),
+                        }
+                    ))
+                })
+                .and_then(|f| visitor.visit_f64(f)),
+            XbrlValue::Nil => visitor.visit_none(),
+        }
+    }
+
+    fn deserialize_bool<V>(self, visitor: V) -> Result<V::Value>
+    where
+        V: Visitor<'de>,
+    {
+        match self.value {
+            XbrlValue::String(s) => {
+                let lower = s.to_lowercase();
+                if lower == "true" || lower == "yes" {
+                    visitor.visit_bool(true)
+                } else if lower == "false" || lower == "no" {
+                    visitor.visit_bool(false)
+                } else {
+                    Err(XbrlError::custom(format!(
+                        "For field '{}': {}",
+                        self.field_name,
+                        XbrlError::ValueConversion {
+                            value: s,
+                            target_type: "bool".to_string(),
+                        }
+                    )))
+                }
+            }
             XbrlValue::Nil => visitor.visit_none(),
         }
     }
@@ -457,9 +562,10 @@ impl<'de> Deserializer<'de> for ValueDeserializer {
         }
     }
 
-    // Delegate all other type-specific deserialization to deserialize_any
+    // Forward all other type-specific deserialization to deserialize_any.
     serde::forward_to_deserialize_any! {
-        bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
+        <V: Visitor<'de>>
+        i8 i16 i32 i128 u8 u16 u32 u64 u128 f32 char
         bytes byte_buf unit unit_struct newtype_struct seq tuple
         tuple_struct map struct enum identifier ignored_any
     }

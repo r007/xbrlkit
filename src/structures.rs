@@ -242,35 +242,20 @@ pub struct UnitMeasure {
 
 /// Typed enumeration for XBRL fact values
 ///
-/// XBRL facts can contain various data types. This enum provides type-safe
-/// representation while maintaining the original semantic meaning of the data.
-///
-/// # Type Inference
-///
-/// The parser uses several heuristics to determine the appropriate type:
-/// - **Decimals attribute**: Presence indicates numeric data
-/// - **Content patterns**: "true"/"false" for booleans, numeric patterns for numbers
-/// - **Default**: String representation for text content
+/// This enum provides a simple, untyped representation for fact values. The parser
+/// extracts the raw string content, and the `serde` deserializer is responsible for
+/// converting this raw string into the specific type requested by the target struct.
 ///
 /// # Nil Values
 ///
-/// XBRL supports explicit nil values (`xsi:nil="true"`) which are represented
-/// as `XbrlValue::Nil` to distinguish from empty strings or zero values.
+/// XBRL supports explicit nil values (`xsi:nil="true"`) or empty tags, which are
+/// represented as `XbrlValue::Nil` to distinguish from non-empty strings.
 #[derive(Debug, Clone, PartialEq)]
 pub enum XbrlValue {
-    /// Text content (most common for narrative disclosures)
+    /// Text content, preserved exactly as found in the XML.
     String(String),
 
-    /// Boolean values (flags, yes/no indicators)
-    Bool(bool),
-
-    /// Floating-point numeric values (monetary amounts, ratios)
-    F64(f64),
-
-    /// Integer values (share counts, employee counts)
-    I64(i64),
-
-    /// Explicit nil values (xsi:nil="true" or empty tags)
+    /// Explicit nil values (xsi:nil="true" or empty tags).
     Nil,
 }
 
@@ -325,14 +310,10 @@ mod tests {
     #[test]
     fn test_xbrl_value_types() {
         let string_val = XbrlValue::String("Test".to_string());
-        let bool_val = XbrlValue::Bool(true);
-        let f64_val = XbrlValue::F64(123.45);
-        let i64_val = XbrlValue::I64(100);
         let nil_val = XbrlValue::Nil;
 
-        // Test that all variants can be created and are distinct
-        assert_ne!(string_val, bool_val);
-        assert_ne!(f64_val, i64_val);
+        // Test that variants can be created and are distinct
+        assert_ne!(string_val, nil_val);
         assert_eq!(nil_val, XbrlValue::default());
     }
 
