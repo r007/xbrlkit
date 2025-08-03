@@ -317,11 +317,10 @@ impl<'a, 'b> XbrlMapAccess<'a, 'b> {
     /// * `XbrlMapAccess` - Iterator ready for serde processing
     fn new(de: &'a mut XbrlDeserializer<'b>, fields: &'static [&'static str]) -> Self {
         let field_iterator: Box<dyn Iterator<Item = &'static str>> = if fields.is_empty() {
-            // Flatten mode: offer all available fact names
+            // Flatten mode: offer all available fact names.
+            // We use the full_name_map as the canonical source to avoid duplication.
             let mut keys: Vec<String> = de.context.full_name_map.keys().cloned().collect();
-            keys.extend(de.context.local_name_map.keys().cloned());
             keys.sort();
-            keys.dedup();
 
             // Convert to static strings (note: this leaks memory, but is needed for the iterator lifetime)
             let static_keys: &'static [String] = keys.leak();
