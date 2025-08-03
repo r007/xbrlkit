@@ -40,8 +40,10 @@ pub enum XbrlError {
     ///
     /// Occurs when attempting to convert XBRL fact values to specific
     /// Rust types (e.g., parsing "123.45" as f64 or "true" as bool).
-    #[error("Fact value could not be parsed: '{value}' as {target_type}")]
+    #[error("For field '{field_name}': could not parse value '{value}' as {target_type}")]
     ValueConversion {
+        /// The name of the struct field being deserialized.
+        field_name: String,
         /// The raw value that failed conversion
         value: String,
         /// The target type we attempted to convert to
@@ -107,6 +109,7 @@ mod tests {
     #[test]
     fn test_error_display() {
         let err = XbrlError::ValueConversion {
+            field_name: "amount".to_string(),
             value: "invalid_number".to_string(),
             target_type: "f64".to_string(),
         };
