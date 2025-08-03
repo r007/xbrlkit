@@ -2,7 +2,6 @@ use serde_json::to_string;
 use std::collections::HashMap;
 use std::fs::read_to_string;
 use std::time::{Duration, Instant};
-use xbrl::extract_xbrl_data;
 use xbrl::taxonomies::{
     dei::{DeiInfo, extract_dei},
     us_gaap::{Financials, extract_financials},
@@ -18,47 +17,55 @@ fn benchmark_complete_serde_workflow() {
     let content =
         read_to_string(FORM_10Q_1_FIXTURE).expect("Failed to read form_10q_1.xml fixture");
 
+    let mut parse_times = Vec::new();
     let mut dei_times = Vec::new();
     let mut gaap_times = Vec::new();
     let mut total_times = Vec::new();
 
     // Run multiple iterations to get stable timing
     for _ in 0..20 {
-        let start = Instant::now();
+        let total_start = Instant::now();
 
-        // DEI extraction
+        // Step 1: Parse once
+        let parse_start = Instant::now();
+        let context = xbrl::from_str(&content).expect("XBRL parsing should succeed");
+        parse_times.push(parse_start.elapsed());
+
+        // Step 2: Extract multiple times from the same context
         let dei_start = Instant::now();
-        let _dei_info = extract_dei(&content).expect("DEI extraction should succeed");
+        let _dei_info = extract_dei(&context).expect("DEI extraction should succeed");
         dei_times.push(dei_start.elapsed());
 
-        // US-GAAP extraction
         let gaap_start = Instant::now();
         let _financials =
-            extract_financials(&content).expect("Financial extraction should succeed");
+            extract_financials(&context).expect("Financial extraction should succeed");
         gaap_times.push(gaap_start.elapsed());
 
-        total_times.push(start.elapsed());
+        total_times.push(total_start.elapsed());
     }
 
+    let avg_parse = parse_times.iter().sum::<Duration>() / parse_times.len() as u32;
     let avg_dei = dei_times.iter().sum::<Duration>() / dei_times.len() as u32;
     let avg_gaap = gaap_times.iter().sum::<Duration>() / gaap_times.len() as u32;
     let avg_total = total_times.iter().sum::<Duration>() / total_times.len() as u32;
 
-    println!("Complete serde workflow benchmark results:");
+    println!("Complete serde workflow benchmark results (new architecture):");
+    println!("  Parsing/Indexing: {:?} (avg)", avg_parse);
     println!("  DEI extraction:   {:?} (avg)", avg_dei);
     println!("  US-GAAP extraction: {:?} (avg)", avg_gaap);
-    println!("  Total extraction: {:?} (avg)", avg_total);
+    println!("  Total workflow:   {:?} (avg)", avg_total);
     println!("  Document size:    {} bytes", content.len());
 
     // Performance ratio analysis
+    let total_extraction_nanos = (avg_dei + avg_gaap).as_nanos();
     println!("\nPerformance breakdown:");
     println!(
-        "  DEI:     {:.1}%",
-        (avg_dei.as_nanos() as f64 / avg_total.as_nanos() as f64) * 100.0
+        "  Parsing:   {:.1}%",
+        (avg_parse.as_nanos() as f64 / avg_total.as_nanos() as f64) * 100.0
     );
     println!(
-        "  US-GAAP: {:.1}%",
-        (avg_gaap.as_nanos() as f64 / avg_total.as_nanos() as f64) * 100.0
+        "  Extraction: {:.1}%",
+        (total_extraction_nanos as f64 / avg_total.as_nanos() as f64) * 100.0
     );
 
     // Performance assertions - should complete extraction quickly
@@ -67,23 +74,11 @@ fn benchmark_complete_serde_workflow() {
         "Total extraction should be under 2 seconds, got {:?}",
         avg_total
     );
-
-    assert!(
-        avg_dei.as_millis() < 1000,
-        "DEI extraction should be under 1 second, got {:?}",
-        avg_dei
-    );
-
-    assert!(
-        avg_gaap.as_millis() < 1000,
-        "US-GAAP extraction should be under 1 second, got {:?}",
-        avg_gaap
-    );
 }
 
-/// Benchmarks the raw XBRL parsing (before serde deserialization).
+/// Benchmarks the raw XBRL parsing and indexing (creation of XbrlDataContext).
 #[test]
-fn benchmark_raw_xbrl_parsing() {
+fn benchmark_raw_xbrl_parsing_and_indexing() {
     let content =
         read_to_string(FORM_10Q_1_FIXTURE).expect("Failed to read form_10q_1.xml fixture");
 
@@ -92,7 +87,7 @@ fn benchmark_raw_xbrl_parsing() {
     // Run multiple iterations to get stable timing
     for _ in 0..15 {
         let start = Instant::now();
-        let _xbrl_data = extract_xbrl_data(&content).expect("Should parse XBRL successfully");
+        let _context = xbrl::from_str(&content).expect("Should parse XBRL successfully");
         times.push(start.elapsed());
     }
 
@@ -100,7 +95,7 @@ fn benchmark_raw_xbrl_parsing() {
     let min_time = times.iter().min().unwrap();
     let max_time = times.iter().max().unwrap();
 
-    println!("Raw XBRL parsing benchmark results:");
+    println!("Raw XBRL parsing & indexing benchmark results:");
     println!("  Average: {:?}", avg_time);
     println!("  Min:     {:?}", min_time);
     println!("  Max:     {:?}", max_time);
@@ -109,7 +104,7 @@ fn benchmark_raw_xbrl_parsing() {
     // Performance assertion - raw parsing should be very fast
     assert!(
         avg_time.as_millis() < 500,
-        "Raw XBRL parsing should be under 500ms, got {:?}",
+        "Raw XBRL parsing & indexing should be under 500ms, got {:?}",
         avg_time
     );
 }
@@ -119,18 +114,16 @@ fn benchmark_raw_xbrl_parsing() {
 fn benchmark_serde_deserialization_scaling() {
     let content =
         read_to_string(FORM_10Q_1_FIXTURE).expect("Failed to read form_10q_1.xml fixture");
+    let context = xbrl::from_str(&content).expect("Parse once");
 
-    // Test different extraction "sizes" by measuring different taxonomies.
-    // We must use Box<dyn Fn(...)> to create a trait object, as each closure has a
-    // unique, anonymous type. We also map the result to `()` to unify the return type.
     let taxonomies: Vec<(&str, Box<dyn Fn() -> xbrl::error::Result<()>>)> = vec![
         (
             "DEI (Document Info)",
-            Box::new(|| extract_dei(&content).map(|_| ())),
+            Box::new(|| extract_dei(&context).map(|_| ())),
         ),
         (
             "US-GAAP (Financial)",
-            Box::new(|| extract_financials(&content).map(|_| ())),
+            Box::new(|| extract_financials(&context).map(|_| ())),
         ),
     ];
 
@@ -167,11 +160,11 @@ fn benchmark_extraction_efficiency() {
         read_to_string(FORM_10Q_1_FIXTURE).expect("Failed to read form_10q_1.xml fixture");
 
     // Parse raw XBRL to understand the data volume
-    let xbrl_data = extract_xbrl_data(&content).unwrap();
+    let context = xbrl::from_str(&content).unwrap();
 
-    let context_count = xbrl_data.contexts.len();
-    let unit_count = xbrl_data.units.len();
-    let fact_count = xbrl_data.facts.len();
+    let context_count = context.xbrl.contexts.len();
+    let unit_count = context.xbrl.units.len();
+    let fact_count = context.xbrl.facts.len();
 
     println!("XBRL document characteristics:");
     println!("  Document size: {} bytes", content.len());
@@ -181,11 +174,11 @@ fn benchmark_extraction_efficiency() {
 
     // Test extraction efficiency
     let start = Instant::now();
-    let dei_info = extract_dei(&content).unwrap();
+    let dei_info = extract_dei(&context).unwrap();
     let dei_time = start.elapsed();
 
     let start = Instant::now();
-    let financials = extract_financials(&content).unwrap();
+    let financials = extract_financials(&context).unwrap();
     let financials_time = start.elapsed();
 
     // Count extracted fields
@@ -197,13 +190,13 @@ fn benchmark_extraction_efficiency() {
         "  DEI: {} fields extracted in {:?} ({:.2} fields/ms)",
         dei_field_count,
         dei_time,
-        dei_field_count as f64 / dei_time.as_millis() as f64
+        dei_field_count as f64 / dei_time.as_millis().max(1) as f64
     );
     println!(
         "  Financials: {} fields extracted in {:?} ({:.2} fields/ms)",
         financial_field_count,
         financials_time,
-        financial_field_count as f64 / financials_time.as_millis() as f64
+        financial_field_count as f64 / financials_time.as_millis().max(1) as f64
     );
 
     let total_extracted = dei_field_count + financial_field_count;
@@ -249,8 +242,9 @@ fn benchmark_document_size_scaling() {
 
         for _ in 0..10 {
             let start = Instant::now();
-            let _dei = extract_dei(&content).unwrap();
-            let _financials = extract_financials(&content).unwrap();
+            let context = xbrl::from_str(&content).unwrap();
+            let _dei = extract_dei(&context).unwrap();
+            let _financials = extract_financials(&context).unwrap();
             times.push(start.elapsed());
         }
 
@@ -275,10 +269,11 @@ fn benchmark_document_size_scaling() {
 fn benchmark_serialization_performance() {
     let content =
         read_to_string(FORM_10Q_1_FIXTURE).expect("Failed to read form_10q_1.xml fixture");
+    let context = xbrl::from_str(&content).unwrap();
 
     // Extract data first
-    let dei_info = extract_dei(&content).unwrap();
-    let financials = extract_financials(&content).unwrap();
+    let dei_info = extract_dei(&context).unwrap();
+    let financials = extract_financials(&context).unwrap();
 
     // Benchmark JSON serialization
     let mut dei_serialize_times = Vec::new();
@@ -333,15 +328,13 @@ fn benchmark_serialization_performance() {
 fn benchmark_fact_selection_performance() {
     let content =
         read_to_string(FORM_10Q_1_FIXTURE).expect("Failed to read form_10q_1.xml fixture");
-
-    // Parse raw XBRL to understand fact distribution
-    let xbrl_data = extract_xbrl_data(&content).unwrap();
+    let context = xbrl::from_str(&content).unwrap();
 
     // Count facts with multiple contexts (where selection logic matters)
     let mut multi_context_concepts = 0;
     let mut concept_counts = HashMap::new();
 
-    for fact in &xbrl_data.facts {
+    for fact in &context.xbrl.facts {
         *concept_counts.entry(&fact.full_name).or_insert(0) += 1;
     }
 
@@ -352,16 +345,16 @@ fn benchmark_fact_selection_performance() {
     }
 
     println!("Fact selection complexity analysis:");
-    println!("  Total facts: {}", xbrl_data.facts.len());
+    println!("  Total facts: {}", context.xbrl.facts.len());
     println!("  Unique concepts: {}", concept_counts.len());
     println!("  Multi-context concepts: {}", multi_context_concepts);
-    println!("  Contexts: {}", xbrl_data.contexts.len());
+    println!("  Contexts: {}", context.xbrl.contexts.len());
 
     // Benchmark the extraction which includes fact selection
     let mut times = Vec::new();
     for _ in 0..20 {
         let start = Instant::now();
-        let _financials = extract_financials(&content).unwrap();
+        let _financials = extract_financials(&context).unwrap();
         times.push(start.elapsed());
     }
 

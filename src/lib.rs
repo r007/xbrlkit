@@ -18,8 +18,15 @@ pub mod taxonomies;
 
 // Re-export key types for consumers of this crate
 pub use error::{Result, XbrlError};
-pub use parser::extract_xbrl_data;
+pub use serde_xbrl::XbrlDataContext;
 pub use structures::Xbrl;
+
+/// Parses an XBRL document from a string into a reusable data context.
+/// This is the primary entry point for all XBRL processing.
+pub fn from_str(content: &str) -> Result<XbrlDataContext> {
+    let xbrl = parser::extract_xbrl_data(content)?;
+    Ok(XbrlDataContext::new(xbrl))
+}
 
 // Re-export the high-level taxonomy components for easy access
 pub use taxonomies::{

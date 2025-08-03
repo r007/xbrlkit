@@ -10,7 +10,7 @@
 //! but works with any US-GAAP compliant XBRL document.
 
 use crate::error::Result;
-use crate::serde_xbrl::from_str;
+use crate::serde_xbrl::{XbrlDataContext, from_data};
 use serde::{Deserialize, Serialize};
 
 /// Represents key data points from the Balance Sheet.
@@ -469,6 +469,6 @@ pub struct Financials {
 ///
 /// This function uses the high-performance `serde`-based deserializer to map
 /// XBRL concepts directly to the `Financials` struct.
-pub fn extract_financials(content: &str) -> Result<Financials> {
-    from_str(content)
+pub fn extract_financials(context: &XbrlDataContext) -> Result<Financials> {
+    from_data(context)
 }

@@ -8,7 +8,7 @@
 //! the reporting entity, contact information, audit details, and various regulatory flags.
 
 use crate::error::Result;
-use crate::serde_xbrl::from_str;
+use crate::serde_xbrl::{XbrlDataContext, from_data};
 use serde::{Deserialize, Serialize};
 
 /// Contains information about the document itself, such as its type, period, and fiscal details.
@@ -465,6 +465,6 @@ pub struct DeiInfo {
 ///
 /// This function uses the high-performance `serde`-based deserializer to map
 /// XBRL concepts directly to the `DeiInfo` struct.
-pub fn extract_dei(content: &str) -> Result<DeiInfo> {
-    from_str(content)
+pub fn extract_dei(context: &XbrlDataContext) -> Result<DeiInfo> {
+    from_data(context)
 }

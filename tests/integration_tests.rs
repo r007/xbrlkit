@@ -11,17 +11,19 @@ const FORM_10Q_FIXTURE: &str = "../fixtures/filings/form_10q.xml";
 const FORM_10Q_1_FIXTURE: &str = "../fixtures/filings/form_10q_1.xml";
 
 /// Tests the complete XBRL parsing workflow using the new serde-based approach.
-/// This validates that all three taxonomy extractors work with real XBRL data.
 #[test]
 fn test_complete_xbrl_parsing_workflow() {
     let content =
         read_to_string(FORM_10Q_1_FIXTURE).expect("Failed to read form_10q_1.xml fixture");
 
-    // Test DEI extraction
-    let dei_info = extract_dei(&content).expect("DEI extraction should succeed");
+    // New two-step process: parse once into a context.
+    let context = xbrl::from_str(&content).expect("XBRL parsing should succeed");
 
-    // Test US-GAAP extraction
-    let financials = extract_financials(&content).expect("US-GAAP extraction should succeed");
+    // Test DEI extraction from the context.
+    let dei_info = extract_dei(&context).expect("DEI extraction should succeed");
+
+    // Test US-GAAP extraction from the same context.
+    let financials = extract_financials(&context).expect("US-GAAP extraction should succeed");
 
     // Verify DEI data extraction
     assert_dei_extraction(&dei_info);
@@ -45,8 +47,10 @@ fn test_dei_extraction_across_fixtures() {
     for file_path in &files {
         let content =
             read_to_string(file_path).unwrap_or_else(|_| panic!("Failed to read {}", file_path));
+        let context = xbrl::from_str(&content)
+            .unwrap_or_else(|_| panic!("XBRL parsing failed for {}", file_path));
 
-        let dei_info = extract_dei(&content)
+        let dei_info = extract_dei(&context)
             .unwrap_or_else(|_| panic!("DEI extraction failed for {}", file_path));
 
         // Both files should extract basic DEI information
@@ -80,8 +84,10 @@ fn test_financial_extraction_across_fixtures() {
     for file_path in &files {
         let content =
             read_to_string(file_path).unwrap_or_else(|_| panic!("Failed to read {}", file_path));
+        let context = xbrl::from_str(&content)
+            .unwrap_or_else(|_| panic!("XBRL parsing failed for {}", file_path));
 
-        let financials = extract_financials(&content)
+        let financials = extract_financials(&context)
             .unwrap_or_else(|_| panic!("Financial extraction failed for {}", file_path));
 
         // Both files should have some narrative disclosures
@@ -118,9 +124,10 @@ fn test_financial_extraction_across_fixtures() {
 fn test_cross_taxonomy_consistency() {
     let content =
         read_to_string(FORM_10Q_1_FIXTURE).expect("Failed to read form_10q_1.xml fixture");
+    let context = xbrl::from_str(&content).unwrap();
 
-    let dei_info = extract_dei(&content).unwrap();
-    let financials = extract_financials(&content).unwrap();
+    let dei_info = extract_dei(&context).unwrap();
+    let financials = extract_financials(&context).unwrap();
 
     // Cross-validate that both taxonomies extract consistent entity information
     if let Some(dei_cik) = &dei_info.entity.entity_central_index_key {
@@ -153,29 +160,39 @@ fn test_performance_characteristics() {
 
     let mut extraction_times = Vec::new();
 
+    // Parse once
+    let parse_start = Instant::now();
+    let context = xbrl::from_str(&content).unwrap();
+    let parse_time = parse_start.elapsed();
+
     // Test DEI performance
     let start = Instant::now();
-    let _dei_info = extract_dei(&content).unwrap();
+    let _dei_info = extract_dei(&context).unwrap();
     extraction_times.push(("DEI", start.elapsed()));
 
     // Test US-GAAP performance
     let start = Instant::now();
-    let _financials = extract_financials(&content).unwrap();
+    let _financials = extract_financials(&context).unwrap();
     extraction_times.push(("US-GAAP", start.elapsed()));
+
+    println!("Initial parsing time: {:?}", parse_time);
 
     // All extractions should complete quickly
     for (taxonomy, duration) in &extraction_times {
         assert!(
-            duration.as_millis() < 2000,
-            "{} extraction should complete in under 2 seconds, took {:?}",
+            duration.as_millis() < 1000, // Reduced threshold as parsing is separate
+            "{} extraction should complete in under 1 second, took {:?}",
             taxonomy,
             duration
         );
         println!("{} extraction time: {:?}", taxonomy, duration);
     }
 
-    let total_time: Duration = extraction_times.iter().map(|(_, d)| *d).sum();
-    println!("Total extraction time: {:?}", total_time);
+    let total_extraction_time: Duration = extraction_times.iter().map(|(_, d)| *d).sum();
+    println!(
+        "Total extraction time (post-parse): {:?}",
+        total_extraction_time
+    );
     println!("Document size: {} bytes", content.len());
 }
 
@@ -191,25 +208,19 @@ fn test_error_handling_across_taxonomies() {
         </xbrl>
     "#;
 
-    // All taxonomy extractors should handle malformed XML gracefully
-    let dei_result = extract_dei(malformed_content);
-    let financials_result = extract_financials(malformed_content);
-
+    // Parsing should fail.
+    let context_result = xbrl::from_str(malformed_content);
     assert!(
-        dei_result.is_err(),
-        "DEI extraction should fail with malformed XML"
-    );
-    assert!(
-        financials_result.is_err(),
-        "Financial extraction should fail with malformed XML"
+        context_result.is_err(),
+        "Parsing should fail with malformed XML"
     );
 
     // All should return parsing errors
-    match dei_result {
+    match context_result {
         Err(XbrlError::ParsingError(_)) | Err(XbrlError::AttributeError(_)) => {
-            println!("✓ DEI extraction correctly handles malformed XML");
+            println!("✓ Parsing correctly handles malformed XML");
         }
-        _ => panic!("DEI extraction should return ParsingError or AttributeError"),
+        _ => panic!("Parsing should return ParsingError or AttributeError"),
     }
 }
 
@@ -223,8 +234,9 @@ fn test_empty_document_handling() {
     "#;
 
     // All extractors should handle empty documents gracefully
-    let dei_info = extract_dei(empty_content).expect("Should handle empty document");
-    let financials = extract_financials(empty_content).expect("Should handle empty document");
+    let context = xbrl::from_str(empty_content).expect("Should handle empty document");
+    let dei_info = extract_dei(&context).expect("Should handle empty document");
+    let financials = extract_financials(&context).expect("Should handle empty document");
 
     // All fields should be None/default for empty document
     assert!(dei_info.entity.entity_central_index_key.is_none());
@@ -238,8 +250,9 @@ fn test_empty_document_handling() {
 fn test_specific_fact_extraction() {
     let content =
         read_to_string(FORM_10Q_1_FIXTURE).expect("Failed to read form_10q_1.xml fixture");
+    let context = xbrl::from_str(&content).unwrap();
 
-    let financials = extract_financials(&content).unwrap();
+    let financials = extract_financials(&context).unwrap();
 
     // The XML contains <us-gaap:DeferredCompensationLiabilityClassifiedNoncurrent>2990000</us-gaap:DeferredCompensationLiabilityClassifiedNoncurrent>
     assert_eq!(
@@ -282,7 +295,8 @@ fn test_namespace_handling() {
         read_to_string(FORM_10Q_1_FIXTURE).expect("Failed to read form_10q_1.xml fixture");
 
     // First, examine what raw XBRL data looks like
-    let xbrl_data = xbrl::extract_xbrl_data(&content).unwrap();
+    let context = xbrl::from_str(&content).unwrap();
+    let xbrl_data = &context.xbrl;
 
     // Find facts from different namespaces
     let dei_facts: Vec<_> = xbrl_data
@@ -308,8 +322,8 @@ fn test_namespace_handling() {
     println!("  US-GAAP facts found: {}", us_gaap_facts.len());
 
     // Now test that serde correctly maps these to the structs
-    let dei_info = extract_dei(&content).unwrap();
-    let financials = extract_financials(&content).unwrap();
+    let dei_info = extract_dei(&context).unwrap();
+    let financials = extract_financials(&context).unwrap();
 
     // Verify namespace mapping worked
     assert!(

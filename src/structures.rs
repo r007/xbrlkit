@@ -27,13 +27,6 @@
 //!   │         │ │         │ │         │
 //!   └─────────┘ └─────────┘ └─────────┘
 //! ```
-//!
-//! ## Design Principles
-//!
-//! - **Minimal Overhead**: Structures are designed for fast deserialization
-//! - **Type Safety**: Strong typing with meaningful defaults
-//! - **Memory Efficiency**: Optimized for processing large XBRL documents
-//! - **Extensibility**: Easy to extend for additional XBRL features
 
 use serde::Deserialize;
 

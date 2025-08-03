@@ -6,122 +6,64 @@
 //!
 //! ## Architecture Overview
 //!
-//! The deserializer operates in two main phases:
+//! The architecture is decoupled into a data container and a deserializer:
+//!
+//! 1.  **`XbrlDataContext`**: A read-only "database" created once per document. It holds
+//!     all parsed facts, contexts, and pre-built indexes for fast lookups.
+//! 2.  **`XbrlDeserializer`**: A lightweight, short-lived state machine that implements
+//!     `serde::Deserializer`. It holds a reference to the `XbrlDataContext` and processes
+//!     a specific slice of facts (a "scope"), enabling nested struct deserialization.
 //!
 //! ```text
 //!   Raw XBRL Document
 //!           │
 //!           ▼
 //!   ┌─────────────────┐
-//!   │  XBRL Parser    │ <- Extract facts, contexts, units
+//!   │  XBRL Parser    │
 //!   │  (parser.rs)    │
 //!   └─────────────────┘
 //!           │
 //!           ▼
 //!   ┌─────────────────┐
-//!   │ XbrlDeserializer│ <- Index facts, implement smart selection
-//!   │                 │
-//!   │ • Fact indexing │
-//!   │ • Context cache │
-//!   │ • Best fact sel │
+//!   │ XbrlDataContext │ <- Holds all data & indexes. Created ONCE.
 //!   └─────────────────┘
 //!           │
-//!           ▼
-//!   ┌─────────────────┐
-//!   │  Serde Visitor  │ <- Map to target structs
-//!   │                 │
-//!   │ • Field mapping │
-//!   │ • Type convert  │
-//!   │ • Option handle │
-//!   └─────────────────┘
+//!           ├─►┌──────────────────┐
+//!           │  │ XbrlDeserializer │ <- Deserializes a scope of facts
+//!           │  └──────────────────┘      into a struct (e.g., DeiInfo)
 //!           │
-//!           ▼
-//!   Typed Rust Structs
+//!           └─►┌──────────────────┐
+//!              │ XbrlDeserializer │ <- Deserializes another scope
+//!              └──────────────────┘      into another struct (e.g., Financials)
 //! ```
-//!
-//! ## Fact Selection Algorithm
-//!
-//! When multiple facts exist for the same concept (e.g., quarterly vs annual data),
-//! the deserializer applies sophisticated selection logic:
-//!
-//! 1. **Temporal Preference**: Most recent periods preferred
-//! 2. **Dimensional Simplicity**: Consolidated data preferred over segmented
-//! 3. **Context Quality**: Valid contexts preferred over malformed ones
 
 use crate::error::{Result, XbrlError};
-use crate::parser::extract_xbrl_data;
 use crate::structures::{Context, Fact, Period, Xbrl, XbrlValue};
 use serde::de::{self, Deserializer, IntoDeserializer, MapAccess, Visitor};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
-/// High-level entry point for XBRL-to-struct deserialization
-///
-/// This function provides a familiar serde interface while hiding the complexity
-/// of XBRL parsing and fact selection. It automatically handles the two-phase
-/// process of XML parsing followed by structured deserialization.
-///
-/// # Type Parameter
-///
-/// - `T`: Target struct type that implements `DeserializeOwned`
-///
-/// # Arguments
-///
-/// * `s` - Raw XBRL document content as string
-///
-/// # Returns
-///
-/// * `Result<T>` - Deserialized struct or parsing/deserialization error
-///
-/// # Errors
-///
-/// Returns `XbrlError` for various failure modes:
-/// - `ParsingError`: Malformed XML structure
-/// - `DeserializationError`: Missing required fields or mapping failures
-/// - `AttributeError`: Invalid XML attributes
-pub fn from_str<T>(s: &str) -> Result<T>
-where
-    T: de::DeserializeOwned,
-{
-    let xbrl_data = extract_xbrl_data(s)?;
-    let mut deserializer = XbrlDeserializer::from_xbrl(xbrl_data);
-    T::deserialize(&mut deserializer)
-}
+/// Holds the complete, indexed XBRL data for efficient lookup.
+/// This struct acts as a read-only database during deserialization.
+pub struct XbrlDataContext {
+    /// Original parsed XBRL data containing all facts, contexts, and units.
+    pub xbrl: Xbrl,
 
-/// Core XBRL deserializer that implements serde's `Deserializer` trait
-///
-/// This struct maintains all the state needed for intelligent XBRL deserialization,
-/// including pre-computed indexes for fast fact lookup and cached context information
-/// for smart fact selection.
-pub struct XbrlDeserializer {
-    /// Original parsed XBRL data containing all facts, contexts, and units
-    xbrl: Xbrl,
-
-    /// Index mapping full concept names (e.g., "us-gaap:Assets") to fact positions
+    /// Index mapping full concept names to fact positions.
     full_name_map: HashMap<String, Vec<usize>>,
 
-    /// Index mapping local concept names (e.g., "Assets") to fact positions
+    /// Index mapping local concept names to fact positions.
     local_name_map: HashMap<String, Vec<usize>>,
 
-    /// Context cache mapping context IDs to resolved context objects
+    /// Context cache mapping context IDs to resolved context objects.
     contexts: HashMap<String, Context>,
 }
 
-impl XbrlDeserializer {
-    /// Creates a new deserializer from parsed XBRL data
-    ///
+impl XbrlDataContext {
+    /// Creates a new data context from parsed XBRL data.
     /// This constructor performs the expensive initialization work of building
-    /// indexes and caching contexts. The resulting deserializer can then perform
-    /// very fast fact lookups during the deserialization process.
-    ///
-    /// # Arguments
-    ///
-    /// * `xbrl` - Parsed XBRL document containing facts, contexts, and units
-    ///
-    /// # Returns
-    ///
-    /// * `XbrlDeserializer` - Initialized deserializer ready for use
-    pub fn from_xbrl(xbrl: Xbrl) -> Self {
+    /// indexes and caching contexts.
+    pub fn new(xbrl: Xbrl) -> Self {
         let mut full_name_map = HashMap::<String, Vec<usize>>::new();
         let mut local_name_map = HashMap::<String, Vec<usize>>::new();
 
@@ -144,7 +86,7 @@ impl XbrlDeserializer {
             .map(|c| (c.id.clone(), c.clone()))
             .collect();
 
-        XbrlDeserializer {
+        XbrlDataContext {
             xbrl,
             full_name_map,
             local_name_map,
@@ -268,13 +210,31 @@ impl XbrlDeserializer {
         let date_a = a.end_date.as_deref().or(a.instant.as_deref()).unwrap_or("");
         let date_b = b.end_date.as_deref().or(b.instant.as_deref()).unwrap_or("");
 
-        // Compare dates lexicographically (works for ISO 8601 format)
-        // Note: We reverse the comparison so more recent dates are "greater"
-        date_b.cmp(date_a)
+        // Compare dates lexicographically (works for ISO 8601 format).
+        // A more recent date string is "greater", which is the desired ordering.
+        date_a.cmp(date_b)
     }
 }
 
-impl<'de, 'a> de::Deserializer<'de> for &'a mut XbrlDeserializer {
+/// Deserializes a target struct from an `XbrlDataContext`.
+/// This is the new high-level entry point for deserializing a taxonomy.
+pub fn from_data<'a, T>(context: &'a XbrlDataContext) -> Result<T>
+where
+    T: de::DeserializeOwned,
+{
+    let mut deserializer = XbrlDeserializer { context };
+    T::deserialize(&mut deserializer)
+}
+
+/// Core XBRL deserializer that implements serde's `Deserializer` trait.
+/// This struct is now lightweight and holds references to the data context
+/// and the current scope of facts to be processed.
+pub struct XbrlDeserializer<'a> {
+    /// A reference to the global, read-only data context.
+    context: &'a XbrlDataContext,
+}
+
+impl<'de, 'a, 'b> de::Deserializer<'de> for &'a mut XbrlDeserializer<'b> {
     type Error = XbrlError;
 
     /// Deserializes any value by delegating to struct deserialization
@@ -330,18 +290,18 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut XbrlDeserializer {
 /// This struct implements serde's `MapAccess` trait, allowing the deserializer
 /// to present XBRL facts as key-value pairs where keys are concept names and
 /// values are the selected fact values.
-struct XbrlMapAccess<'a> {
+struct XbrlMapAccess<'a, 'b> {
     /// Reference to the main deserializer for fact lookup
-    de: &'a XbrlDeserializer,
+    de: &'a mut XbrlDeserializer<'b>,
 
     /// Iterator over field names to process
     field_iterator: Box<dyn Iterator<Item = &'static str> + 'a>,
 
     /// Current fact value to be deserialized (set by next_key_seed)
-    value: Option<&'a XbrlValue>,
+    value: Option<&'b XbrlValue>,
 }
 
-impl<'a> XbrlMapAccess<'a> {
+impl<'a, 'b> XbrlMapAccess<'a, 'b> {
     /// Creates a new map access iterator for the given fields
     ///
     /// # Arguments
@@ -352,11 +312,11 @@ impl<'a> XbrlMapAccess<'a> {
     /// # Returns
     ///
     /// * `XbrlMapAccess` - Iterator ready for serde processing
-    fn new(de: &'a XbrlDeserializer, fields: &'static [&'static str]) -> Self {
+    fn new(de: &'a mut XbrlDeserializer<'b>, fields: &'static [&'static str]) -> Self {
         let field_iterator: Box<dyn Iterator<Item = &'static str>> = if fields.is_empty() {
             // Flatten mode: offer all available fact names
-            let mut keys: Vec<String> = de.full_name_map.keys().cloned().collect();
-            keys.extend(de.local_name_map.keys().cloned());
+            let mut keys: Vec<String> = de.context.full_name_map.keys().cloned().collect();
+            keys.extend(de.context.local_name_map.keys().cloned());
             keys.sort();
             keys.dedup();
 
@@ -376,7 +336,7 @@ impl<'a> XbrlMapAccess<'a> {
     }
 }
 
-impl<'de, 'a> MapAccess<'de> for XbrlMapAccess<'a> {
+impl<'de, 'a, 'b> MapAccess<'de> for XbrlMapAccess<'a, 'b> {
     type Error = XbrlError;
 
     /// Provides the next key (field name) for deserialization
@@ -398,7 +358,7 @@ impl<'de, 'a> MapAccess<'de> for XbrlMapAccess<'a> {
     {
         // Find the next field that we have data for
         while let Some(field) = self.field_iterator.next() {
-            if let Some(fact) = self.de.find_best_fact(field) {
+            if let Some(fact) = self.de.context.find_best_fact(field) {
                 // We found a fact for this field - cache its value
                 self.value = Some(&fact.value);
 
@@ -508,29 +468,11 @@ impl<'de> Deserializer<'de> for ValueDeserializer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::structures::{Entity, Identifier, Period};
+    use crate::structures::{Entity, Identifier};
 
-    #[test]
-    fn test_context_comparison_with_recent_periods() {
-        let recent_context = Context {
-            id: "recent".to_string(),
-            entity: Entity {
-                identifier: Identifier {
-                    scheme: "cik".to_string(),
-                    value: "123".to_string(),
-                },
-                segment: None,
-            },
-            period: Period {
-                instant: None,
-                start_date: Some("2024-01-01".to_string()),
-                end_date: Some("2024-03-31".to_string()),
-            },
-            scenario: None,
-        };
-
-        let older_context = Context {
-            id: "older".to_string(),
+    fn create_test_context(id: &str, end_date: &str) -> Context {
+        Context {
+            id: id.to_string(),
             entity: Entity {
                 identifier: Identifier {
                     scheme: "cik".to_string(),
@@ -541,13 +483,18 @@ mod tests {
             period: Period {
                 instant: None,
                 start_date: Some("2023-01-01".to_string()),
-                end_date: Some("2023-03-31".to_string()),
+                end_date: Some(end_date.to_string()),
             },
             scenario: None,
-        };
+        }
+    }
 
-        let result =
-            XbrlDeserializer::compare_contexts(Some(&recent_context), Some(&older_context));
+    #[test]
+    fn test_context_comparison_with_recent_periods() {
+        let recent_context = create_test_context("recent", "2024-03-31");
+        let older_context = create_test_context("older", "2023-03-31");
+
+        let result = XbrlDataContext::compare_contexts(Some(&recent_context), Some(&older_context));
         assert_eq!(
             result,
             Ordering::Greater,
@@ -562,39 +509,12 @@ mod tests {
             start_date: Some("2024-01-01".to_string()),
             end_date: Some("2024-03-31".to_string()),
         };
-
         let older_period = Period {
             instant: None,
             start_date: Some("2023-01-01".to_string()),
             end_date: Some("2023-03-31".to_string()),
         };
-
-        let result = XbrlDeserializer::compare_periods(&recent_period, &older_period);
+        let result = XbrlDataContext::compare_periods(&recent_period, &older_period);
         assert_eq!(result, Ordering::Greater, "More recent period should win");
-    }
-
-    #[test]
-    fn test_value_deserializer_types() {
-        // Test string value
-        let string_deserializer = ValueDeserializer {
-            value: XbrlValue::String("test".to_string()),
-        };
-
-        // Test that the deserializer handles different value types
-        // (Full testing would require implementing a test visitor)
-        match string_deserializer.value {
-            XbrlValue::String(s) => assert_eq!(s, "test"),
-            _ => panic!("Should be string value"),
-        }
-
-        // Test nil value
-        let nil_deserializer = ValueDeserializer {
-            value: XbrlValue::Nil,
-        };
-
-        match nil_deserializer.value {
-            XbrlValue::Nil => {} // Expected
-            _ => panic!("Should be nil value"),
-        }
     }
 }
