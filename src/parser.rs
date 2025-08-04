@@ -214,7 +214,6 @@ fn handle_start_event(
         _ => {
             let (mut fact, is_explicitly_nil) = parse_fact_attributes(&e);
             fact.full_name = tag_name;
-            fact.local_name = fact.full_name.split(':').last().unwrap_or("").to_string();
 
             if is_explicitly_nil {
                 // Fact is explicitly marked as nil - skip content and mark as nil
@@ -268,7 +267,6 @@ fn handle_empty_event(xbrl: &mut Xbrl, e: BytesStart, tag_name: String) {
     // Treat as a fact with no value
     let (mut fact, _) = parse_fact_attributes(&e);
     fact.full_name = tag_name;
-    fact.local_name = fact.full_name.split(':').last().unwrap_or("").to_string();
     fact.value = XbrlValue::Nil; // Empty elements are considered nil
 
     xbrl.facts.push(fact);

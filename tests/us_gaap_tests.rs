@@ -272,11 +272,11 @@ fn test_serde_concept_name_mapping() {
 
     println!("Raw XBRL Facts Found:");
     for fact in &context.xbrl.facts {
-        if fact.local_name.starts_with("Assets")
-            || fact.local_name.starts_with("Liabilities")
-            || fact.local_name.starts_with("Stockholders")
+        if fact.full_name.contains("us-gaap:Assets")
+            || fact.full_name.contains("us-gaap:Liabilities")
+            || fact.full_name.contains("us-gaap:Stockholders")
         {
-            println!("  {}: {:?}", fact.local_name, fact.value);
+            println!("  {}: {:?}", fact.full_name, fact.value);
         }
     }
 
@@ -476,7 +476,7 @@ fn test_context_selection_logic() {
                 .xbrl
                 .facts
                 .iter()
-                .filter(|f| f.local_name == fact.local_name)
+                .filter(|f| f.full_name == fact.full_name)
                 .count();
 
             if same_concept_count > 1 {
@@ -485,7 +485,7 @@ fn test_context_selection_logic() {
                     // Limit output
                     println!(
                         "  {}: context {}, value: {:?}",
-                        fact.local_name, context_ref, fact.value
+                        fact.full_name, context_ref, fact.value
                     );
                 }
             }

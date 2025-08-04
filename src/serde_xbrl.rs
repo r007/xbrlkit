@@ -52,9 +52,6 @@ pub struct XbrlDataContext {
     /// Index mapping full concept names to fact positions.
     full_name_map: HashMap<String, Vec<usize>>,
 
-    /// Index mapping local concept names to fact positions.
-    local_name_map: HashMap<String, Vec<usize>>,
-
     /// Context cache mapping context IDs to resolved context objects.
     contexts: HashMap<String, Context>,
 }
@@ -62,19 +59,14 @@ pub struct XbrlDataContext {
 impl XbrlDataContext {
     /// Creates a new data context from parsed Xbrl data.
     /// This constructor performs the expensive initialization work of building
-    /// indexes and caching contexts.
+    /// the fact index and caching contexts.
     pub fn new(xbrl: Xbrl) -> Self {
         let mut full_name_map = HashMap::<String, Vec<usize>>::new();
-        let mut local_name_map = HashMap::<String, Vec<usize>>::new();
 
-        // Build fact indexes for fast lookup
+        // Build the single fact index for fast lookup by full name.
         for (i, fact) in xbrl.facts.iter().enumerate() {
             full_name_map
                 .entry(fact.full_name.clone())
-                .or_default()
-                .push(i);
-            local_name_map
-                .entry(fact.local_name.clone())
                 .or_default()
                 .push(i);
         }
@@ -89,16 +81,21 @@ impl XbrlDataContext {
         XbrlDataContext {
             xbrl,
             full_name_map,
-            local_name_map,
             contexts,
         }
     }
 
-    /// Finds the best fact for a given concept name using intelligent selection
+    /// Finds the best fact for a given concept name using a prioritized search.
     ///
-    /// This method implements the core logic of the XBRL deserializer: when multiple
-    /// facts exist for the same concept (common in XBRL due to different contexts),
-    /// it selects the most appropriate one based on business logic.
+    /// This method implements the simplified and robust fact-finding algorithm.
+    ///
+    /// # Search Logic
+    /// 1.  **Direct Match**: It first attempts to find a fact by treating `rename_attr`
+    ///     as a full, namespaced name (e.g., "dei:DocumentType"). This is fast and precise.
+    /// 2.  **Local Name Fallback**: If no direct match is found, it then performs a
+    ///     fallback search by iterating through all known facts and matching their
+    ///     local name (the part after the ':') against `rename_attr`. This correctly
+    ///     handles fields renamed to a local name (e.g., "Assets").
     ///
     /// # Arguments
     ///
@@ -107,29 +104,46 @@ impl XbrlDataContext {
     /// # Returns
     ///
     /// * `Option<&Fact>` - The best matching fact, or None if no facts found
-    ///
-    /// # Example Selection Logic
-    ///
-    /// For a concept like "Assets" with multiple contexts:
-    /// - Context A: Q3 2024 (consolidated)
-    /// - Context B: Q2 2024 (consolidated)
-    /// - Context C: Q3 2024 (segment breakdown)
-    ///
-    /// The algorithm would select Context A (most recent + consolidated).
     fn find_best_fact(&self, rename_attr: &str) -> Option<&Fact> {
-        // Determine which index to use based on concept name format
-        let fact_indices = if rename_attr.contains(':') {
-            // Full namespace format (e.g., "us-gaap:Assets")
-            self.full_name_map.get(rename_attr)
+        let candidates: Vec<&Fact> = if let Some(indices) = self.full_name_map.get(rename_attr) {
+            // Step 1: Direct match on full name (fast path)
+            indices.iter().map(|&i| &self.xbrl.facts[i]).collect()
         } else {
-            // Local name format (e.g., "Assets")
-            self.local_name_map.get(rename_attr)
+            // Step 2: Fallback to local name search (slower path)
+            let local_candidates: Vec<_> = self
+                .xbrl
+                .facts
+                .iter()
+                .filter(|fact| fact.full_name.split(':').last() == Some(rename_attr))
+                .collect();
+
+            if local_candidates.is_empty() {
+                return None;
+            }
+
+            local_candidates
         };
 
-        // Get all candidate facts for this concept
-        let candidates: Vec<_> = fact_indices?.iter().map(|&i| &self.xbrl.facts[i]).collect();
+        self.select_best_fact_from_candidates(candidates)
+    }
 
-        // Apply selection algorithm to find the best fact
+    /// Selects the best fact from a collection of candidates using context comparison.
+    ///
+    /// This helper method encapsulates the common logic for evaluating and ranking
+    /// fact candidates based on their associated contexts. It applies the business
+    /// rules for context quality (recency, dimensional simplicity, etc.).
+    ///
+    /// # Arguments
+    ///
+    /// * `candidates` - Collection of fact references to evaluate
+    ///
+    /// # Returns
+    ///
+    /// * `Option<&Fact>` - The highest-ranked fact, or None if no candidates provided
+    fn select_best_fact_from_candidates<'c, I>(&'c self, candidates: I) -> Option<&'c Fact>
+    where
+        I: IntoIterator<Item = &'c Fact>,
+    {
         candidates.into_iter().max_by(|a, b| {
             let context_a = a.context_ref.as_ref().and_then(|id| self.contexts.get(id));
             let context_b = b.context_ref.as_ref().and_then(|id| self.contexts.get(id));

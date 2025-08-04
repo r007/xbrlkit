@@ -303,8 +303,8 @@ fn test_namespace_handling() {
         .facts
         .iter()
         .filter(|fact| {
-            fact.local_name.starts_with("EntityCentralIndexKey")
-                || fact.local_name.starts_with("DocumentFiscalPeriodFocus")
+            fact.full_name.contains("dei:EntityCentralIndexKey")
+                || fact.full_name.contains("dei:DocumentFiscalPeriodFocus")
         })
         .collect();
 
@@ -312,8 +312,8 @@ fn test_namespace_handling() {
         .facts
         .iter()
         .filter(|fact| {
-            fact.local_name
-                .starts_with("DeferredCompensationLiabilityClassifiedNoncurrent")
+            fact.full_name
+                .contains("us-gaap:DeferredCompensationLiabilityClassifiedNoncurrent")
         })
         .collect();
 

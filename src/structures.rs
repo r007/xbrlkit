@@ -283,9 +283,6 @@ pub struct Fact {
     /// The full, namespaced concept name (e.g., "us-gaap:Assets")
     pub full_name: String,
 
-    /// The local concept name without namespace (e.g., "Assets")
-    pub local_name: String,
-
     /// Reference to the context defining when/where this fact applies
     pub context_ref: Option<String>,
 
@@ -321,7 +318,6 @@ mod tests {
     fn test_fact_defaults() {
         let fact = Fact::default();
         assert_eq!(fact.full_name, "");
-        assert_eq!(fact.local_name, "");
         assert_eq!(fact.value, XbrlValue::Nil);
     }
 }
