@@ -433,35 +433,27 @@ pub struct Narratives {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Financials {
     /// Balance sheet information including assets, liabilities, and equity.
-    #[serde(flatten)]
     pub balance_sheet: BalanceSheet,
 
     /// Income statement information including revenues, expenses, and earnings.
-    #[serde(flatten)]
     pub income_statement: IncomeStatement,
 
     /// Cash flow statement information.
-    #[serde(flatten)]
     pub cash_flow_statement: CashFlowStatement,
 
     /// Detailed equity and stock information.
-    #[serde(flatten)]
     pub equity_details: EquityDetails,
 
     /// Temporary equity and warrant information (SPAC-specific).
-    #[serde(flatten)]
     pub temporary_equity_and_warrants: TemporaryEquityAndWarrants,
 
     /// Business combination and acquisition information.
-    #[serde(flatten)]
     pub business_combinations: BusinessCombinations,
 
     /// Comprehensive income details.
-    #[serde(flatten)]
     pub comprehensive_income_details: ComprehensiveIncomeDetails,
 
     /// Narrative disclosures for LLM analysis.
-    #[serde(flatten)]
     pub narratives: Narratives,
 }
 

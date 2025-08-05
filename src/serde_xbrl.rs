@@ -42,6 +42,7 @@ use crate::structures::{Context, Fact, Period, Xbrl, XbrlValue};
 use serde::de::{self, Deserializer, IntoDeserializer, MapAccess, Visitor};
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::vec::IntoIter;
 
 /// Holds the complete, indexed XBRL data for efficient lookup.
 /// This struct acts as a read-only database during deserialization.
@@ -117,8 +118,12 @@ impl XbrlDataContext {
             self.local_name_map.get(rename_attr)
         };
 
+        let Some(indices) = fact_indices else {
+            return None;
+        };
+
         // Get all candidate facts for this concept
-        let candidates: Vec<_> = fact_indices?.iter().map(|&i| &self.xbrl.facts[i]).collect();
+        let candidates: Vec<_> = indices.iter().map(|&i| &self.xbrl.facts[i]).collect();
 
         // Apply selection algorithm to find the best fact
         candidates.into_iter().max_by(|a, b| {
@@ -240,7 +245,9 @@ impl<'de, 'a, 'b> de::Deserializer<'de> for &'a mut XbrlDeserializer<'b> {
         visitor.visit_map(XbrlMapAccess::new(self, &[]))
     }
 
-    /// Deserializes a struct by providing field-aware map access
+    /// Deserializes a struct by providing field-aware map access.
+    /// This is the primary entry point for deserializing structs like `Financials`
+    /// and nested structs like `BalanceSheet`.
     ///
     /// This method is called when serde knows the target struct type and its fields.
     /// We use this information to optimize the deserialization process by only
@@ -267,12 +274,51 @@ impl<'de, 'a, 'b> de::Deserializer<'de> for &'a mut XbrlDeserializer<'b> {
         visitor.visit_map(XbrlMapAccess::new(self, fields))
     }
 
-    // Delegate all other deserialization methods to deserialize_any
-    // This is a common pattern for custom deserializers that treat all data as maps
+    /// Deserializes a map. We treat it like a struct, which is correct for `#[serde(flatten)]`.
+    fn deserialize_map<V>(self, visitor: V) -> Result<V::Value>
+    where
+        V: Visitor<'de>,
+    {
+        self.deserialize_struct("", &[], visitor)
+    }
+
+    /// Deserializes an `Option<T>`. This is called for fields like `Option<f64>`.
+    /// It checks if a fact exists. If not, it returns `None`. If it does, it proceeds
+    /// to deserialize the inner `T`.
+    fn deserialize_option<V>(self, visitor: V) -> Result<V::Value>
+    where
+        V: Visitor<'de>,
+    {
+        // This is a placeholder implementation. The real logic is in `XbrlMapAccess`,
+        // which won't even attempt to deserialize a value if no fact is found,
+        // relying on `#[serde(default)]` instead. This function must exist to satisfy
+        // the `Deserializer` trait and guide serde's type resolution.
+        // We simply delegate to `visit_some` and let the subsequent `deserialize_f64` etc.
+        // handle the actual value lookup.
+        visitor.visit_some(self)
+    }
+
+    // For primitive types, we create a `ValueDeserializer`. This will only be called
+    // for fields inside a struct, after `XbrlMapAccess` has found a fact.
+    fn deserialize_f64<V>(self, _visitor: V) -> Result<V::Value>
+    where
+        V: Visitor<'de>,
+    {
+        // This function should not be called directly on the main deserializer.
+        // It indicates a logic error. The `XbrlMapAccess` should always create
+        // a `ValueDeserializer` for primitive values.
+        Err(XbrlError::DeserializationError(
+            "deserialize_f64 called on main deserializer".to_string(),
+        ))
+    }
+
+    // By removing `forward_to_deserialize_any!`, we force serde to use the
+    // specific methods above. We only need to forward types that are not
+    // structs, maps, or primitives we handle specially.
     serde::forward_to_deserialize_any! {
-        bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
-        bytes byte_buf option unit unit_struct newtype_struct seq tuple
-        tuple_struct map enum identifier ignored_any
+        bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 char str string
+        bytes byte_buf unit unit_struct newtype_struct seq tuple
+        tuple_struct enum identifier ignored_any
     }
 }
 
@@ -286,10 +332,10 @@ struct XbrlMapAccess<'a, 'b> {
     de: &'a mut XbrlDeserializer<'b>,
 
     /// Iterator over field names to process
-    field_iterator: Box<dyn Iterator<Item = &'static str> + 'a>,
+    field_iterator: IntoIter<String>,
 
     /// Current field name, cached for rich error reporting
-    current_field: Option<&'static str>,
+    current_field: Option<String>,
 
     /// Current fact to be deserialized (set by next_key_seed)
     fact: Option<&'b Fact>,
@@ -307,19 +353,21 @@ impl<'a, 'b> XbrlMapAccess<'a, 'b> {
     ///
     /// * `XbrlMapAccess` - Iterator ready for serde processing
     fn new(de: &'a mut XbrlDeserializer<'b>, fields: &'static [&'static str]) -> Self {
-        let field_iterator: Box<dyn Iterator<Item = &'static str>> = if fields.is_empty() {
-            // Flatten mode: offer all available fact names
+        let field_iterator: IntoIter<String> = if fields.is_empty() {
+            // Flatten mode: build an owned Vec of keys.
             let mut keys: Vec<String> = de.context.full_name_map.keys().cloned().collect();
             keys.extend(de.context.local_name_map.keys().cloned());
             keys.sort();
             keys.dedup();
 
-            // Convert to static strings (note: this leaks memory, but is needed for the iterator lifetime)
-            let static_keys: &'static [String] = keys.leak();
-            Box::new(static_keys.iter().map(|s| s.as_str()))
+            keys.into_iter()
         } else {
-            // Normal struct mode: iterate over provided fields
-            Box::new(fields.iter().copied())
+            // Structured mode: create an owned Vec from the static slice.
+            fields
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+                .into_iter()
         };
 
         XbrlMapAccess {
@@ -353,17 +401,40 @@ impl<'de, 'a, 'b> MapAccess<'de> for XbrlMapAccess<'a, 'b> {
     {
         // Find the next field that we have data for
         while let Some(field) = self.field_iterator.next() {
-            if let Some(fact) = self.de.context.find_best_fact(field) {
-                // We found a fact for this field - cache it and its name
-                self.fact = Some(fact);
-                self.current_field = Some(field);
+            // **THE FIX**: An empty field name is invalid and causes infinite recursion
+            // in flatten mode. We must explicitly skip it.
+            if field.is_empty() {
+                continue;
+            }
 
-                // Offer the field name as a key to the visitor
+            // Heuristic: fields with ':' are XBRL concepts (primitives).
+            // Fields without ':' are nested structs.
+            let is_primitive_field = field.contains(':');
+
+            if is_primitive_field {
+                // This is a primitive field like `us-gaap:Assets`.
+                // We MUST find a fact for it.
+                if let Some(fact) = self.de.context.find_best_fact(&field) {
+                    self.fact = Some(fact);
+                    self.current_field = Some(field.clone());
+
+                    // Offer the field name as a key to the visitor
+                    return seed.deserialize(field.into_deserializer()).map(Some);
+                } else {
+                    // No fact found for this primitive field. Skip it.
+                    // Serde will use `#[serde(default)]` to populate it with `None`.
+                    continue; // Move to the next field.
+                }
+            } else {
+                // This is a nested struct field like `balance_sheet`.
+                // We don't look for a fact. We offer the key and let `next_value_seed` recurse.
+                self.fact = None; // Signal to `next_value_seed` that this is a struct.
+                self.current_field = Some(field.clone());
                 return seed.deserialize(field.into_deserializer()).map(Some);
             }
         }
 
-        // No more fields with data available
+        // No more fields left in the iterator.
         Ok(None)
     }
 
@@ -388,12 +459,15 @@ impl<'de, 'a, 'b> MapAccess<'de> for XbrlMapAccess<'a, 'b> {
     where
         V: de::DeserializeSeed<'de>,
     {
-        let fact = self
-            .fact
-            .take()
-            .expect("next_value_seed called without a successful next_key_seed");
-
-        seed.deserialize(ValueDeserializer { fact })
+        if let Some(fact) = self.fact.take() {
+            // A fact was found by next_key_seed. This must be a primitive.
+            // Deserialize it using the specialized ValueDeserializer.
+            seed.deserialize(ValueDeserializer { fact })
+        } else {
+            // No fact was found. This must be a nested struct.
+            // Delegate back to the main deserializer to start a new `deserialize_struct` cycle.
+            seed.deserialize(&mut *self.de)
+        }
     }
 }
 
@@ -436,11 +510,9 @@ impl<'de, 'a> Deserializer<'de> for ValueDeserializer<'a> {
                         if let Ok(i) = clean_s.parse::<i64>() {
                             return visitor.visit_i64(i);
                         }
-                    } else {
+                    } else if let Ok(f) = clean_s.parse::<f64>() {
                         // Any other 'decimals' value implies a float
-                        if let Ok(f) = clean_s.parse::<f64>() {
-                            return visitor.visit_f64(f);
-                        }
+                        return visitor.visit_f64(f);
                     }
                 }
 
