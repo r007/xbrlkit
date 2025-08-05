@@ -291,8 +291,8 @@ struct XbrlMapAccess<'a, 'b> {
     /// Current field name, cached for rich error reporting
     current_field: Option<&'static str>,
 
-    /// Current fact value to be deserialized (set by next_key_seed)
-    value: Option<&'b XbrlValue>,
+    /// Current fact to be deserialized (set by next_key_seed)
+    fact: Option<&'b Fact>,
 }
 
 impl<'a, 'b> XbrlMapAccess<'a, 'b> {
@@ -326,7 +326,7 @@ impl<'a, 'b> XbrlMapAccess<'a, 'b> {
             de,
             field_iterator,
             current_field: None,
-            value: None,
+            fact: None,
         }
     }
 }
@@ -354,8 +354,8 @@ impl<'de, 'a, 'b> MapAccess<'de> for XbrlMapAccess<'a, 'b> {
         // Find the next field that we have data for
         while let Some(field) = self.field_iterator.next() {
             if let Some(fact) = self.de.context.find_best_fact(field) {
-                // We found a fact for this field - cache its value and name
-                self.value = Some(&fact.value);
+                // We found a fact for this field - cache it and its name
+                self.fact = Some(fact);
                 self.current_field = Some(field);
 
                 // Offer the field name as a key to the visitor
@@ -388,20 +388,12 @@ impl<'de, 'a, 'b> MapAccess<'de> for XbrlMapAccess<'a, 'b> {
     where
         V: de::DeserializeSeed<'de>,
     {
-        let value = self
-            .value
+        let fact = self
+            .fact
             .take()
             .expect("next_value_seed called without a successful next_key_seed");
 
-        let field_name = self
-            .current_field
-            .take()
-            .expect("current_field should be set by next_key_seed");
-
-        seed.deserialize(ValueDeserializer {
-            value: value.clone(),
-            field_name,
-        })
+        seed.deserialize(ValueDeserializer { fact })
     }
 }
 
@@ -412,24 +404,23 @@ impl<'de, 'a, 'b> MapAccess<'de> for XbrlMapAccess<'a, 'b> {
 /// a struct field (e.g., `f64`, `bool`, `String`). It implements `serde`'s
 /// type-directed deserialization methods.
 struct ValueDeserializer<'a> {
-    /// The XBRL value to be deserialized
-    value: XbrlValue,
-    /// The name of the field being deserialized, for rich error messages
-    field_name: &'a str,
+    /// The complete XBRL fact to be deserialized
+    fact: &'a Fact,
 }
 
 impl<'de, 'a> Deserializer<'de> for ValueDeserializer<'a> {
     type Error = XbrlError;
 
     /// Deserializes the value based on its runtime type. This is a fallback
-    /// when the specific target type is not known.
+    /// when the specific target type is not known. It uses the `decimals`
+    /// attribute to make an intelligent guess between int, float, and string.
     fn deserialize_any<V>(self, visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
-        match self.value {
+        match &self.fact.value {
             XbrlValue::String(s) => {
-                // Attempt to parse in a reasonable order: bool -> i64 -> f64 -> string
+                // 1. Check for boolean
                 let lower = s.to_lowercase();
                 if lower == "true" || lower == "yes" {
                     return visitor.visit_bool(true);
@@ -437,13 +428,24 @@ impl<'de, 'a> Deserializer<'de> for ValueDeserializer<'a> {
                 if lower == "false" || lower == "no" {
                     return visitor.visit_bool(false);
                 }
-                if let Ok(i) = s.replace(',', "").parse::<i64>() {
-                    return visitor.visit_i64(i);
+
+                // 2. Check for numeric types using the 'decimals' attribute
+                if let Some(decimals) = &self.fact.decimals {
+                    let clean_s = s.replace(',', "");
+                    if decimals == "0" {
+                        if let Ok(i) = clean_s.parse::<i64>() {
+                            return visitor.visit_i64(i);
+                        }
+                    } else {
+                        // Any other 'decimals' value implies a float
+                        if let Ok(f) = clean_s.parse::<f64>() {
+                            return visitor.visit_f64(f);
+                        }
+                    }
                 }
-                if let Ok(f) = s.replace(',', "").parse::<f64>() {
-                    return visitor.visit_f64(f);
-                }
-                visitor.visit_string(s)
+
+                // 3. Fallback to string
+                visitor.visit_string(s.clone())
             }
             XbrlValue::Nil => visitor.visit_none(),
         }
@@ -454,9 +456,9 @@ impl<'de, 'a> Deserializer<'de> for ValueDeserializer<'a> {
     where
         V: Visitor<'de>,
     {
-        match self.value {
-            XbrlValue::String(s) => visitor.visit_string(s),
-            XbrlValue::Nil => visitor.visit_none(),
+        match &self.fact.value {
+            XbrlValue::String(s) => visitor.visit_string(s.clone()),
+            XbrlValue::Nil => visitor.visit_none(), // Should be handled by deserialize_option
         }
     }
 
@@ -471,12 +473,12 @@ impl<'de, 'a> Deserializer<'de> for ValueDeserializer<'a> {
     where
         V: Visitor<'de>,
     {
-        match self.value {
+        match &self.fact.value {
             XbrlValue::String(s) => s
                 .replace(',', "")
                 .parse::<i64>()
                 .map_err(|_| XbrlError::ValueConversion {
-                    field_name: self.field_name.to_string(),
+                    field_name: self.fact.full_name.clone(),
                     value: s.clone(),
                     target_type: "i64".to_string(),
                 })
@@ -489,12 +491,12 @@ impl<'de, 'a> Deserializer<'de> for ValueDeserializer<'a> {
     where
         V: Visitor<'de>,
     {
-        match self.value {
+        match &self.fact.value {
             XbrlValue::String(s) => s
                 .replace(',', "")
                 .parse::<f64>()
                 .map_err(|_| XbrlError::ValueConversion {
-                    field_name: self.field_name.to_string(),
+                    field_name: self.fact.full_name.clone(),
                     value: s.clone(),
                     target_type: "f64".to_string(),
                 })
@@ -507,7 +509,7 @@ impl<'de, 'a> Deserializer<'de> for ValueDeserializer<'a> {
     where
         V: Visitor<'de>,
     {
-        match self.value {
+        match &self.fact.value {
             XbrlValue::String(s) => {
                 let lower = s.to_lowercase();
                 if lower == "true" || lower == "yes" {
@@ -516,8 +518,8 @@ impl<'de, 'a> Deserializer<'de> for ValueDeserializer<'a> {
                     visitor.visit_bool(false)
                 } else {
                     Err(XbrlError::ValueConversion {
-                        field_name: self.field_name.to_string(),
-                        value: s,
+                        field_name: self.fact.full_name.clone(),
+                        value: s.clone(),
                         target_type: "bool".to_string(),
                     })
                 }
@@ -535,7 +537,7 @@ impl<'de, 'a> Deserializer<'de> for ValueDeserializer<'a> {
     where
         V: Visitor<'de>,
     {
-        match self.value {
+        match self.fact.value {
             XbrlValue::Nil => visitor.visit_none(),
             _ => visitor.visit_some(self),
         }
