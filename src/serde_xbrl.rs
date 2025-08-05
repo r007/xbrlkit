@@ -506,7 +506,9 @@ impl<'de, 'a> Deserializer<'de> for ValueDeserializer<'a> {
                 // 2. Check for numeric types using the 'decimals' attribute
                 if let Some(decimals) = &self.fact.decimals {
                     let clean_s = s.replace(',', "");
-                    if decimals == "0" {
+                    // Treat "INF" decimals as integersб which is common for
+                    // share counts and other whole numbers.
+                    if decimals == "0" || decimals.eq_ignore_ascii_case("INF") {
                         if let Ok(i) = clean_s.parse::<i64>() {
                             return visitor.visit_i64(i);
                         }
