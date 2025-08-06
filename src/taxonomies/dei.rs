@@ -441,23 +441,18 @@ pub struct AuditInfo {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DeiInfo {
     /// Document-specific information.
-    #[serde(flatten)]
     pub document: DocumentInfo,
 
     /// Entity-specific information.
-    #[serde(flatten)]
     pub entity: EntityInfo,
 
     /// Entity address information.
-    #[serde(flatten)]
     pub entity_address: EntityAddressInfo,
 
     /// Entity contact information.
-    #[serde(flatten)]
     pub entity_contact: EntityContactInfo,
 
     /// Audit-specific information.
-    #[serde(flatten)]
     pub audit: AuditInfo,
 }
 
