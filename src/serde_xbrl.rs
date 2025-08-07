@@ -289,13 +289,14 @@ impl<'de, 'a, 'b> de::Deserializer<'de> for &'a mut XbrlDeserializer<'b> {
     where
         V: Visitor<'de>,
     {
-        // This is a placeholder implementation. The real logic is in `XbrlMapAccess`,
-        // which won't even attempt to deserialize a value if no fact is found,
-        // relying on `#[serde(default)]` instead. This function must exist to satisfy
-        // the `Deserializer` trait and guide serde's type resolution.
-        // We simply delegate to `visit_some` and let the subsequent `deserialize_f64` etc.
-        // handle the actual value lookup.
-        visitor.visit_some(self)
+        // Important: returning None here prevents serde from attempting to deserialize
+        // primitives (e.g., f64) on the main deserializer, which would trigger the
+        // 'deserialize_f64 called on main deserializer' error.
+        //
+        // Actual presence of a value for a field is handled by XbrlMapAccess::next_value_seed,
+        // which supplies a ValueDeserializer when a fact exists. For fields with no facts,
+        // None is correct behavior.
+        visitor.visit_none()
     }
 
     // For primitive types, we create a `ValueDeserializer`. This will only be called
