@@ -237,7 +237,7 @@ pub struct EntityInfo {
 
     /// The number of employees.
     #[serde(rename = "dei:EntityNumberOfEmployees", default)]
-    pub entity_number_of_employees: Option<f64>,
+    pub entity_number_of_employees: Option<i64>,
 
     /// The entity's fiscal year end date, in MM-DD format.
     #[serde(rename = "dei:CurrentFiscalYearEndDate", default)]
