@@ -37,6 +37,23 @@ use super::error::{Result, XbrlError};
 use super::structures::{Fact, Xbrl, XbrlValue};
 use quick_xml::{Reader, Writer, de::from_str, events::BytesStart, events::Event};
 
+/// Checks if a tag name represents an XBRL root element
+///
+/// This function handles various namespace prefixes that might be used
+/// for the XBRL root element, making the parser more flexible.
+///
+/// # Arguments
+///
+/// * `tag_name` - The XML tag name to check
+///
+/// # Returns
+///
+/// `true` if the tag name represents an XBRL root element
+fn is_xbrl_root_element(tag_name: &str) -> bool {
+    // Accept various namespace prefixes for the XBRL root element
+    tag_name == "xbrl" || tag_name.ends_with(":xbrl")
+}
+
 /// Parses an XBRL document using a single-pass, event-driven approach
 ///
 /// This function serves as the primary entry point for XBRL parsing. It processes
@@ -62,11 +79,22 @@ use quick_xml::{Reader, Writer, de::from_str, events::BytesStart, events::Event}
 ///
 /// ```rust
 /// use xbrl::parser::extract_xbrl_data;
-/// use std::fs;
 ///
-/// let content = fs::read_to_string("sample-10q.xml")?;
-/// let xbrl_data = extract_xbrl_data(&content)?;
+/// let content = r#"
+/// <?xml version="1.0" encoding="utf-8"?>
+/// <xbrl xmlns="http://www.xbrl.org/2003/instance">
+///     <context id="c0">
+///         <entity>
+///             <identifier scheme="http://www.sec.gov/CIK">0001234567</identifier>
+///         </entity>
+///         <period>
+///             <instant>2021-03-31</instant>
+///         </period>
+///     </context>
+/// </xbrl>
+/// "#;
 ///
+/// let xbrl_data = extract_xbrl_data(content).unwrap();
 /// println!("Extracted {} facts from {} contexts",
 ///          xbrl_data.facts.len(),
 ///          xbrl_data.contexts.len());
@@ -81,16 +109,19 @@ pub fn extract_xbrl_data(xml_content: &str) -> Result<Xbrl> {
     let mut buf = Vec::new();
     let mut xbrl = Xbrl::default();
 
-    // Find and process the root <xbrl> element
+    // Find and process the root XBRL element (handles both <xbrl> and <xbrli:xbrl>)
     loop {
         match reader.read_event_into(&mut buf)? {
-            Event::Start(e) if e.name().as_ref() == b"xbrl" => {
-                process_xbrl_children(&mut reader, &mut xbrl)?;
-                break;
+            Event::Start(e) => {
+                let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                if is_xbrl_root_element(&tag_name) {
+                    process_xbrl_children(&mut reader, &mut xbrl)?;
+                    break;
+                }
             }
             Event::Eof => {
                 return Err(XbrlError::DeserializationError(
-                    "Could not find root <xbrl> tag in document".to_string(),
+                    "Could not find root XBRL tag (<xbrl> or <xbrli:xbrl>) in document".to_string(),
                 ));
             }
             _ => {
@@ -140,9 +171,12 @@ fn process_xbrl_children(reader: &mut Reader<&[u8]>, xbrl: &mut Xbrl) -> Result<
                 let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
                 handle_empty_event(xbrl, e, tag_name);
             }
-            Event::End(e) if e.name().as_ref() == b"xbrl" => {
-                // End of root element - parsing complete
-                break;
+            Event::End(e) => {
+                let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                if is_xbrl_root_element(&tag_name) {
+                    // End of root element - parsing complete
+                    break;
+                }
             }
             Event::Eof => {
                 // Unexpected end of document
@@ -187,7 +221,8 @@ fn handle_start_event(
 ) -> Result<()> {
     match tag_name.as_str() {
         // Handle context definitions - these are complex structures that need full XML parsing
-        "context" => {
+        // Accept both "context" and "xbrli:context" (with namespace prefix)
+        tag if tag == "context" || tag.ends_with(":context") => {
             let element_xml = reconstruct_element(reader, &e, &tag_name)?;
             if let Ok(context) = from_str(&element_xml) {
                 xbrl.contexts.push(context);
@@ -198,7 +233,8 @@ fn handle_start_event(
         }
 
         // Handle unit definitions - similar to contexts
-        "unit" => {
+        // Accept both "unit" and "xbrli:unit" (with namespace prefix)
+        tag if tag == "unit" || tag.ends_with(":unit") => {
             let element_xml = reconstruct_element(reader, &e, &tag_name)?;
             if let Ok(unit) = from_str(&element_xml) {
                 xbrl.units.push(unit);
@@ -432,6 +468,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_is_xbrl_root_element() {
+        // Test various namespace prefixes for XBRL root element
+        assert!(is_xbrl_root_element("xbrl"));
+        assert!(is_xbrl_root_element("xbrli:xbrl"));
+        assert!(is_xbrl_root_element("xbrl:xbrl"));
+        assert!(is_xbrl_root_element("ns:xbrl"));
+
+        // Test non-XBRL elements
+        assert!(!is_xbrl_root_element("context"));
+        assert!(!is_xbrl_root_element("unit"));
+        assert!(!is_xbrl_root_element("xbrl:context"));
+    }
+
+    #[test]
     fn test_parse_typed_value() {
         // Should preserve string content and trim whitespace
         assert_eq!(
@@ -475,6 +525,30 @@ mod tests {
     }
 
     #[test]
+    fn test_namespace_prefix_root_element() {
+        let content_with_namespace = r#"
+        <?xml version="1.0" encoding="utf-8"?>
+        <xbrli:xbrl xmlns:xbrli="http://www.xbrl.org/2003/instance">
+            <xbrli:context id="c0">
+                <xbrli:entity>
+                    <xbrli:identifier scheme="http://www.sec.gov/CIK">0001234567</xbrli:identifier>
+                </xbrli:entity>
+                <xbrli:period>
+                    <xbrli:instant>2021-03-31</xbrli:instant>
+                </xbrli:period>
+            </xbrli:context>
+        </xbrli:xbrl>
+        "#;
+
+        let result = extract_xbrl_data(content_with_namespace);
+        assert!(result.is_ok(), "Should parse XBRL with namespace prefix");
+
+        let xbrl = result.unwrap();
+        assert_eq!(xbrl.contexts.len(), 1);
+        assert_eq!(xbrl.contexts[0].id, "c0");
+    }
+
+    #[test]
     fn test_missing_root_element() {
         let content_without_root = r#"
         <?xml version="1.0" encoding="utf-8"?>
@@ -488,7 +562,7 @@ mod tests {
 
         match result {
             Err(XbrlError::DeserializationError(msg)) => {
-                assert!(msg.contains("Could not find root <xbrl> tag"));
+                assert!(msg.contains("Could not find root XBRL tag"));
             }
             _ => panic!("Should return DeserializationError for missing root"),
         }

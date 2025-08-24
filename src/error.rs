@@ -78,6 +78,13 @@ pub enum XbrlError {
     #[error("Custom deserialization error: {0}")]
     DeserializationError(String),
 
+    /// XBRL document structure errors
+    ///
+    /// Errors that occur when the XBRL document structure is invalid
+    /// or doesn't conform to expected format.
+    #[error("XBRL document structure error: {0}")]
+    DocumentStructureError(String),
+
     /// Generic unsupported operation errors
     ///
     /// Used for XBRL features or constructs that are not yet supported
