@@ -15,7 +15,7 @@ const FORM_10Q_1_FIXTURE: &str = "../fixtures/filings/form_10q_1.xml";
 #[test]
 fn test_extract_financials_form_10q() {
     let content = read_to_string(FORM_10Q_FIXTURE).expect("Failed to read form_10q.xml fixture");
-    let context = xbrl::from_str(&content).expect("XBRL parsing should succeed");
+    let context = xbrl::from_xbrl_str(&content).expect("XBRL parsing should succeed");
 
     let financials = extract_financials(&context).expect("Should extract financials successfully");
 
@@ -50,7 +50,7 @@ fn test_extract_financials_form_10q() {
 fn test_extract_financials_form_10q_1() {
     let content =
         read_to_string(FORM_10Q_1_FIXTURE).expect("Failed to read form_10q_1.xml fixture");
-    let context = xbrl::from_str(&content).expect("XBRL parsing should succeed");
+    let context = xbrl::from_xbrl_str(&content).expect("XBRL parsing should succeed");
 
     let financials = extract_financials(&context).expect("Should extract financials successfully");
 
@@ -99,7 +99,7 @@ fn test_extract_financials_form_10q_1() {
 fn test_balance_sheet_extraction_with_real_data() {
     let content =
         read_to_string(FORM_10Q_1_FIXTURE).expect("Failed to read form_10q_1.xml fixture");
-    let context = xbrl::from_str(&content).unwrap();
+    let context = xbrl::from_xbrl_str(&content).unwrap();
 
     let financials = extract_financials(&context).unwrap();
     let balance_sheet = &financials.balance_sheet;
@@ -153,7 +153,7 @@ fn test_balance_sheet_extraction_with_real_data() {
 fn test_narrative_extraction_from_real_xml() {
     let content =
         read_to_string(FORM_10Q_1_FIXTURE).expect("Failed to read form_10q_1.xml fixture");
-    let context = xbrl::from_str(&content).unwrap();
+    let context = xbrl::from_xbrl_str(&content).unwrap();
 
     let financials = extract_financials(&context).unwrap();
     let narratives = &financials.narratives;
@@ -240,7 +240,7 @@ fn test_narrative_extraction_from_real_xml() {
 fn test_specific_numeric_fact_extraction() {
     let content =
         read_to_string(FORM_10Q_1_FIXTURE).expect("Failed to read form_10q_1.xml fixture");
-    let context = xbrl::from_str(&content).unwrap();
+    let context = xbrl::from_xbrl_str(&content).unwrap();
 
     let financials = extract_financials(&context).unwrap();
 
@@ -268,7 +268,7 @@ fn test_specific_numeric_fact_extraction() {
 fn test_serde_concept_name_mapping() {
     let content =
         read_to_string(FORM_10Q_1_FIXTURE).expect("Failed to read form_10q_1.xml fixture");
-    let context = xbrl::from_str(&content).expect("Should parse XBRL data");
+    let context = xbrl::from_xbrl_str(&content).expect("Should parse XBRL data");
 
     println!("Raw XBRL Facts Found:");
     for fact in &context.xbrl.facts {
@@ -317,7 +317,7 @@ fn test_serde_concept_name_mapping() {
 fn test_financials_serialization_with_real_data() {
     let content =
         read_to_string(FORM_10Q_1_FIXTURE).expect("Failed to read form_10q_1.xml fixture");
-    let context = xbrl::from_str(&content).unwrap();
+    let context = xbrl::from_xbrl_str(&content).unwrap();
 
     let financials = extract_financials(&context).unwrap();
 
@@ -371,7 +371,7 @@ fn test_extract_financials_error_handling() {
         </xbrl>
     "#;
 
-    let result = xbrl::from_str(malformed_content);
+    let result = xbrl::from_xbrl_str(malformed_content);
     assert!(result.is_err(), "Should handle malformed XML gracefully");
 
     match result {
@@ -396,7 +396,8 @@ fn test_extract_financials_empty_document() {
         <xbrl xmlns="http://www.xbrl.org/2003/instance">
         </xbrl>
     "#;
-    let context = xbrl::from_str(empty_content).expect("Should handle empty document gracefully");
+    let context =
+        xbrl::from_xbrl_str(empty_content).expect("Should handle empty document gracefully");
 
     let financials = extract_financials(&context).expect("Should handle empty document gracefully");
 
@@ -429,7 +430,7 @@ fn test_financial_extraction_performance() {
     for _ in 0..5 {
         let start = Instant::now();
         // The new workflow: parse once, then extract.
-        let context = xbrl::from_str(&content).unwrap();
+        let context = xbrl::from_xbrl_str(&content).unwrap();
         let _financials = extract_financials(&context).unwrap();
         times.push(start.elapsed());
     }
@@ -459,7 +460,7 @@ fn test_financial_extraction_performance() {
 fn test_context_selection_logic() {
     let content =
         read_to_string(FORM_10Q_1_FIXTURE).expect("Failed to read form_10q_1.xml fixture");
-    let context = xbrl::from_str(&content).unwrap();
+    let context = xbrl::from_xbrl_str(&content).unwrap();
 
     println!("Context Analysis:");
     println!("  Total contexts found: {}", context.xbrl.contexts.len());
@@ -507,7 +508,7 @@ fn test_context_selection_logic() {
 fn test_fact_value_type_conversion() {
     let content =
         read_to_string(FORM_10Q_1_FIXTURE).expect("Failed to read form_10q_1.xml fixture");
-    let context = xbrl::from_str(&content).unwrap();
+    let context = xbrl::from_xbrl_str(&content).unwrap();
 
     let financials = extract_financials(&context).unwrap();
 

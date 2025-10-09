@@ -21,10 +21,16 @@ pub use error::{Result, XbrlError};
 pub use serde_xbrl::XbrlDataContext;
 pub use structures::Xbrl;
 
-/// Parses an XBRL document from a string into a reusable data context.
-/// This is the primary entry point for all XBRL processing.
-pub fn from_str(content: &str) -> Result<XbrlDataContext> {
+/// Parses a traditional XBRL XML document (fallback method).
+/// Alias for `from_str` for backward compatibility.
+pub fn from_xbrl_str(content: &str) -> Result<XbrlDataContext> {
     let xbrl = parser::extract_xbrl_data(content)?;
+    Ok(XbrlDataContext::new(xbrl))
+}
+
+/// Parses an iXBRL HTML document (primary method for modern SEC filings).
+pub fn from_ixbrl_str(content: &str) -> Result<XbrlDataContext> {
+    let xbrl = parser::extract_ixbrl_data(content)?;
     Ok(XbrlDataContext::new(xbrl))
 }
 

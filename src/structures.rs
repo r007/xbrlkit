@@ -222,15 +222,65 @@ pub struct Unit {
 ///
 /// Used to create complex units that are ratios of two measures,
 /// such as earnings per share (usd/shares) or price-to-earnings ratios.
-#[derive(Deserialize, Debug, Clone)]
+///
+/// Supports both camelCase (unitNumerator) and lowercase (unitnumerator) XML tags.
+#[derive(Debug, Clone)]
 pub struct Divide {
     /// The numerator unit measure
-    #[serde(rename = "unitNumerator")]
     pub unit_numerator: UnitMeasure,
 
     /// The denominator unit measure
-    #[serde(rename = "unitDenominator")]
     pub unit_denominator: UnitMeasure,
+}
+
+// Custom Deserialize implementation to handle both camelCase and lowercase tags
+impl<'de> Deserialize<'de> for Divide {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::{self, MapAccess, Visitor};
+        use std::fmt;
+
+        struct DivideVisitor;
+
+        impl<'de> Visitor<'de> for DivideVisitor {
+            type Value = Divide;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a Divide element with unitnumerator/unitdenominator or unitNumerator/unitDenominator")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut numerator: Option<UnitMeasure> = None;
+                let mut denominator: Option<UnitMeasure> = None;
+
+                while let Some(key) = map.next_key::<String>()? {
+                    let key_lower = key.to_lowercase();
+                    if key_lower == "unitnumerator" {
+                        numerator = Some(map.next_value()?);
+                    } else if key_lower == "unitdenominator" {
+                        denominator = Some(map.next_value()?);
+                    } else {
+                        // Skip unknown fields
+                        let _: serde::de::IgnoredAny = map.next_value()?;
+                    }
+                }
+
+                Ok(Divide {
+                    unit_numerator: numerator
+                        .ok_or_else(|| de::Error::missing_field("unitNumerator"))?,
+                    unit_denominator: denominator
+                        .ok_or_else(|| de::Error::missing_field("unitDenominator"))?,
+                })
+            }
+        }
+
+        deserializer.deserialize_map(DivideVisitor)
+    }
 }
 
 /// Represents a single measure within a unit definition
@@ -250,19 +300,14 @@ pub struct UnitMeasure {
 ///
 /// XBRL supports explicit nil values (`xsi:nil="true"`) or empty tags, which are
 /// represented as `XbrlValue::Nil` to distinguish from non-empty strings.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum XbrlValue {
     /// Text content, preserved exactly as found in the XML.
     String(String),
 
     /// Explicit nil values (xsi:nil="true" or empty tags).
+    #[default]
     Nil,
-}
-
-impl Default for XbrlValue {
-    fn default() -> Self {
-        XbrlValue::Nil
-    }
 }
 
 /// Represents a single XBRL fact (data point)

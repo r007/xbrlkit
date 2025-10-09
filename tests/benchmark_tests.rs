@@ -28,7 +28,7 @@ fn benchmark_complete_serde_workflow() {
 
         // Step 1: Parse once
         let parse_start = Instant::now();
-        let context = xbrl::from_str(&content).expect("XBRL parsing should succeed");
+        let context = xbrl::from_xbrl_str(&content).expect("XBRL parsing should succeed");
         parse_times.push(parse_start.elapsed());
 
         // Step 2: Extract multiple times from the same context
@@ -87,7 +87,7 @@ fn benchmark_raw_xbrl_parsing_and_indexing() {
     // Run multiple iterations to get stable timing
     for _ in 0..15 {
         let start = Instant::now();
-        let _context = xbrl::from_str(&content).expect("Should parse XBRL successfully");
+        let _context = xbrl::from_xbrl_str(&content).expect("Should parse XBRL successfully");
         times.push(start.elapsed());
     }
 
@@ -114,7 +114,7 @@ fn benchmark_raw_xbrl_parsing_and_indexing() {
 fn benchmark_serde_deserialization_scaling() {
     let content =
         read_to_string(FORM_10Q_1_FIXTURE).expect("Failed to read form_10q_1.xml fixture");
-    let context = xbrl::from_str(&content).expect("Parse once");
+    let context = xbrl::from_xbrl_str(&content).expect("Parse once");
 
     let taxonomies: Vec<(&str, Box<dyn Fn() -> xbrl::error::Result<()>>)> = vec![
         (
@@ -160,7 +160,7 @@ fn benchmark_extraction_efficiency() {
         read_to_string(FORM_10Q_1_FIXTURE).expect("Failed to read form_10q_1.xml fixture");
 
     // Parse raw XBRL to understand the data volume
-    let context = xbrl::from_str(&content).unwrap();
+    let context = xbrl::from_xbrl_str(&content).unwrap();
 
     let context_count = context.xbrl.contexts.len();
     let unit_count = context.xbrl.units.len();
@@ -242,7 +242,7 @@ fn benchmark_document_size_scaling() {
 
         for _ in 0..10 {
             let start = Instant::now();
-            let context = xbrl::from_str(&content).unwrap();
+            let context = xbrl::from_xbrl_str(&content).unwrap();
             let _dei = extract_dei(&context).unwrap();
             let _financials = extract_financials(&context).unwrap();
             times.push(start.elapsed());
@@ -269,7 +269,7 @@ fn benchmark_document_size_scaling() {
 fn benchmark_serialization_performance() {
     let content =
         read_to_string(FORM_10Q_1_FIXTURE).expect("Failed to read form_10q_1.xml fixture");
-    let context = xbrl::from_str(&content).unwrap();
+    let context = xbrl::from_xbrl_str(&content).unwrap();
 
     // Extract data first
     let dei_info = extract_dei(&context).unwrap();
@@ -328,7 +328,7 @@ fn benchmark_serialization_performance() {
 fn benchmark_fact_selection_performance() {
     let content =
         read_to_string(FORM_10Q_1_FIXTURE).expect("Failed to read form_10q_1.xml fixture");
-    let context = xbrl::from_str(&content).unwrap();
+    let context = xbrl::from_xbrl_str(&content).unwrap();
 
     // Count facts with multiple contexts (where selection logic matters)
     let mut multi_context_concepts = 0;

@@ -17,7 +17,7 @@ fn test_complete_xbrl_parsing_workflow() {
         read_to_string(FORM_10Q_1_FIXTURE).expect("Failed to read form_10q_1.xml fixture");
 
     // New two-step process: parse once into a context.
-    let context = xbrl::from_str(&content).expect("XBRL parsing should succeed");
+    let context = xbrl::from_xbrl_str(&content).expect("XBRL parsing should succeed");
 
     // Test DEI extraction from the context.
     let dei_info = extract_dei(&context).expect("DEI extraction should succeed");
@@ -47,7 +47,7 @@ fn test_dei_extraction_across_fixtures() {
     for file_path in &files {
         let content =
             read_to_string(file_path).unwrap_or_else(|_| panic!("Failed to read {}", file_path));
-        let context = xbrl::from_str(&content)
+        let context = xbrl::from_xbrl_str(&content)
             .unwrap_or_else(|_| panic!("XBRL parsing failed for {}", file_path));
 
         let dei_info = extract_dei(&context)
@@ -84,7 +84,7 @@ fn test_financial_extraction_across_fixtures() {
     for file_path in &files {
         let content =
             read_to_string(file_path).unwrap_or_else(|_| panic!("Failed to read {}", file_path));
-        let context = xbrl::from_str(&content)
+        let context = xbrl::from_xbrl_str(&content)
             .unwrap_or_else(|_| panic!("XBRL parsing failed for {}", file_path));
 
         let financials = extract_financials(&context)
@@ -124,7 +124,7 @@ fn test_financial_extraction_across_fixtures() {
 fn test_cross_taxonomy_consistency() {
     let content =
         read_to_string(FORM_10Q_1_FIXTURE).expect("Failed to read form_10q_1.xml fixture");
-    let context = xbrl::from_str(&content).unwrap();
+    let context = xbrl::from_xbrl_str(&content).unwrap();
 
     let dei_info = extract_dei(&context).unwrap();
     let financials = extract_financials(&context).unwrap();
@@ -162,7 +162,7 @@ fn test_performance_characteristics() {
 
     // Parse once
     let parse_start = Instant::now();
-    let context = xbrl::from_str(&content).unwrap();
+    let context = xbrl::from_xbrl_str(&content).unwrap();
     let parse_time = parse_start.elapsed();
 
     // Test DEI performance
@@ -209,7 +209,7 @@ fn test_error_handling_across_taxonomies() {
     "#;
 
     // Parsing should fail.
-    let context_result = xbrl::from_str(malformed_content);
+    let context_result = xbrl::from_xbrl_str(malformed_content);
     assert!(
         context_result.is_err(),
         "Parsing should fail with malformed XML"
@@ -234,7 +234,7 @@ fn test_empty_document_handling() {
     "#;
 
     // All extractors should handle empty documents gracefully
-    let context = xbrl::from_str(empty_content).expect("Should handle empty document");
+    let context = xbrl::from_xbrl_str(empty_content).expect("Should handle empty document");
     let dei_info = extract_dei(&context).expect("Should handle empty document");
     let financials = extract_financials(&context).expect("Should handle empty document");
 
@@ -250,7 +250,7 @@ fn test_empty_document_handling() {
 fn test_specific_fact_extraction() {
     let content =
         read_to_string(FORM_10Q_1_FIXTURE).expect("Failed to read form_10q_1.xml fixture");
-    let context = xbrl::from_str(&content).unwrap();
+    let context = xbrl::from_xbrl_str(&content).unwrap();
 
     let financials = extract_financials(&context).unwrap();
 
@@ -295,7 +295,7 @@ fn test_namespace_handling() {
         read_to_string(FORM_10Q_1_FIXTURE).expect("Failed to read form_10q_1.xml fixture");
 
     // First, examine what raw XBRL data looks like
-    let context = xbrl::from_str(&content).unwrap();
+    let context = xbrl::from_xbrl_str(&content).unwrap();
     let xbrl_data = &context.xbrl;
 
     // Find facts from different namespaces

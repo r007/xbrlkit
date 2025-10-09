@@ -118,9 +118,7 @@ impl XbrlDataContext {
             self.local_name_map.get(rename_attr)
         };
 
-        let Some(indices) = fact_indices else {
-            return None;
-        };
+        let indices = fact_indices?;
 
         // Get all candidate facts for this concept
         let candidates: Vec<_> = indices.iter().map(|&i| &self.xbrl.facts[i]).collect();
@@ -214,7 +212,7 @@ impl XbrlDataContext {
 
 /// Deserializes a target struct from an `XbrlDataContext`.
 /// This is the new high-level entry point for deserializing a taxonomy.
-pub fn from_data<'a, T>(context: &'a XbrlDataContext) -> Result<T>
+pub fn from_data<T>(context: &XbrlDataContext) -> Result<T>
 where
     T: de::DeserializeOwned,
 {
@@ -401,7 +399,7 @@ impl<'de, 'a, 'b> MapAccess<'de> for XbrlMapAccess<'a, 'b> {
         K: de::DeserializeSeed<'de>,
     {
         // Find the next field that we have data for
-        while let Some(field) = self.field_iterator.next() {
+        for field in self.field_iterator.by_ref() {
             // **THE FIX**: An empty field name is invalid and causes infinite recursion
             // in flatten mode. We must explicitly skip it.
             if field.is_empty() {
