@@ -81,8 +81,7 @@
 use super::error::{Result, XbrlError};
 use super::structures::{Fact, Xbrl, XbrlValue};
 use quick_xml::{
-    Writer,
-    Reader,
+    Reader, Writer,
     de::from_str,
     events::{BytesStart, Event},
 };

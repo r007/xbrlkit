@@ -139,6 +139,22 @@ pub struct DocumentInfo {
     /// Post-effective amendment number.
     #[serde(rename = "dei:PostEffectiveAmendmentNumber", default)]
     pub post_effective_amendment_number: Option<String>,
+
+    /// Flag indicating pre-commencement issuer tender offer.
+    #[serde(rename = "dei:PreCommencementIssuerTenderOffer", default)]
+    pub pre_commencement_issuer_tender_offer: Option<bool>,
+
+    /// Flag indicating pre-commencement tender offer.
+    #[serde(rename = "dei:PreCommencementTenderOffer", default)]
+    pub pre_commencement_tender_offer: Option<bool>,
+
+    /// Flag indicating soliciting material.
+    #[serde(rename = "dei:SolicitingMaterial", default)]
+    pub soliciting_material: Option<bool>,
+
+    /// Flag indicating written communications.
+    #[serde(rename = "dei:WrittenCommunications", default)]
+    pub written_communications: Option<bool>,
 }
 
 /// Contains information about the reporting entity, such as its name, CIK, and filer status.
