@@ -585,22 +585,12 @@ impl<'de, 'a> Deserializer<'de> for ValueDeserializer<'a> {
         match &self.fact.value {
             XbrlValue::String(s) => {
                 let lower = s.to_lowercase();
-                let trimmed = s.trim();
-                
+
                 // Handle standard text values
                 if lower == "true" || lower == "yes" {
                     visitor.visit_bool(true)
                 } else if lower == "false" || lower == "no" {
                     visitor.visit_bool(false)
-                }
-                // Handle SEC iXBRL checkbox characters
-                // ☐ (U+2610) = empty/unchecked box = false
-                // ☑ (U+2611) = checked box = true
-                // ☒ (U+2612) = checked box with X = true
-                else if trimmed == "☐" {
-                    visitor.visit_bool(false)
-                } else if trimmed == "☑" || trimmed == "☒" {
-                    visitor.visit_bool(true)
                 } else {
                     Err(XbrlError::ValueConversion {
                         field_name: self.fact.full_name.clone(),

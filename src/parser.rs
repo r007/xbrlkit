@@ -30,10 +30,22 @@
 //!   </ix:header>
 //!   <body>
 //!     Total assets: <ix:nonfraction name="us-gaap:Assets"
-//!                    contextref="c1" unitref="usd">1,000,000</ix:nonfraction>
+//!                    contextref="c1" unitref="usd" format="ixt:num-dot-decimal">1,000,000</ix:nonfraction>
 //!   </body>
 //! </html>
 //! ```
+//!
+//! ## Transformation Layer Integration
+//!
+//! The parser automatically captures `format` attributes from iXBRL tags and applies
+//! transformations before storing fact values. This ensures that deserialization
+//! receives normalized values:
+//!
+//! - `format="ixt:num-dot-decimal"` → removes comma separators
+//! - `format="ixt-sec:boolballotbox"` → converts checkboxes to booleans
+//! - `format="ixt-sec:numwordsen"` → converts English words to numbers
+//!
+//! See the `transformations` module for complete transformation documentation.
 //!
 //! ## Architecture
 //!
@@ -80,6 +92,7 @@
 
 use super::error::{Result, XbrlError};
 use super::structures::{Fact, Xbrl, XbrlValue};
+use super::transformations;
 use quick_xml::{
     Reader, Writer,
     de::from_str,
@@ -320,24 +333,35 @@ fn parse_ix_fact(e: &BytesStart, reader: &mut Reader<&[u8]>) -> Result<(Fact, bo
         let mut value_buf = Vec::new();
         match reader.read_event_into(&mut value_buf)? {
             Event::Text(text) => {
-                // Try to unescape, but if it fails (e.g., unknown HTML entities), use raw text
-                let text_value = text
+                let raw_text_value = text
                     .unescape()
                     .unwrap_or_else(|_| {
                         Cow::Owned(String::from_utf8_lossy(text.as_ref()).into_owned())
                     })
                     .into_owned();
 
-                let mut text_value = text_value.replace(",", "");
+                // --- TRANSFORMATION LOGIC ---
+                // Apply format-specific transformations (e.g., num-dot-decimal, boolballotbox)
+                let transformed_value = if let Some(format) = &fact.format {
+                    transformations::apply_transformation(&raw_text_value, format)
+                        .unwrap_or_else(|_| raw_text_value.clone()) // On error, fall back to raw value
+                } else {
+                    raw_text_value
+                };
 
-                if let Some(s) = scale
-                    && let Ok(num) = text_value.parse::<f64>()
-                {
-                    let scaled = num * 10_f64.powi(s);
-                    text_value = scaled.to_string();
-                }
+                // Apply scale attribute if present (e.g., scale="6" means multiply by 10^6)
+                let final_value = if let Some(s) = scale {
+                    if let Ok(num) = transformed_value.parse::<f64>() {
+                        let scaled_num = num * 10f64.powi(s);
+                        scaled_num.to_string()
+                    } else {
+                        transformed_value
+                    }
+                } else {
+                    transformed_value
+                };
 
-                fact.value = XbrlValue::String(text_value);
+                fact.value = XbrlValue::String(final_value);
             }
             _ => {
                 fact.value = XbrlValue::Nil;
@@ -775,6 +799,7 @@ fn parse_fact_attributes_common(e: &BytesStart, is_ixbrl: bool) -> (Fact, bool, 
             "unitref" => fact.unit_ref = Some(value_str.into_owned()),
             "decimals" => fact.decimals = Some(value_str.into_owned()),
             "id" => fact.id = Some(value_str.into_owned()),
+            "format" if is_ixbrl => fact.format = Some(value_str.into_owned()), // NEW: Capture format
 
             // Format-specific attributes
             "name" if is_ixbrl => fact.full_name = value_str.into_owned(),

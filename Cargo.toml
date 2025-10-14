@@ -10,6 +10,10 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 quick-xml = { workspace = true, features = ["serde"] }
 
+# Utilities
+once_cell = { workspace = true }
+regex = { workspace = true }
+
 # Error Handling & Logging
 thiserror = { workspace = true }
 

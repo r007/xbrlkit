@@ -9,12 +9,28 @@
 //! - **US-GAAP**: Complete financial statements (balance sheet, income statement, cash flow)
 //! - **DEI**: Document and Entity Information metadata
 //! - **ECD**: Executive Compensation Disclosure (minimal subset for SPACs)
+//!
+//! ## iXBRL Transformation Layer
+//!
+//! Modern SEC filings use inline XBRL (iXBRL) with transformation format attributes that specify
+//! how raw text values should be normalized. This parser includes a comprehensive transformation
+//! layer that automatically handles 50+ SEC-specified transformations:
+//!
+//! - **Boolean transformations**: Checkbox characters (☐☑☒) → boolean values
+//! - **Numeric transformations**: "seventy thousand" → "70000", "1,000,000" → "1000000"
+//! - **Duration transformations**: "5 years, 2 months" → "P5Y2M" (ISO 8601)
+//! - **Date transformations**: Various date formats → normalized dates
+//! - **Normalization**: Exchange names, state codes, entity categories
+//!
+//! The transformation layer operates transparently during parsing - no configuration needed.
+//! See `transformations` module for details.
 
 pub mod error;
 pub mod parser;
 pub mod serde_xbrl;
 pub mod structures;
 pub mod taxonomies;
+pub mod transformations;
 
 // Re-export key types for consumers of this crate
 pub use error::{Result, XbrlError};

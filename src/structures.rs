@@ -340,7 +340,10 @@ pub struct Fact {
     /// Decimal precision indicator for numeric values
     pub decimals: Option<String>,
 
-    /// Unique identifier for this fact instance
+    /// The transformation rule applied to this fact (iXBRL only).
+    pub format: Option<String>,
+
+    /// Unique identifier for this fact instance.
     pub id: Option<String>,
 
     /// The typed value of this fact
