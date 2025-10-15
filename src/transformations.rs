@@ -18,6 +18,7 @@
 //!
 //! ### Standard (ixt namespace)
 //! - `num-dot-decimal` / `numdotdecimal`: Removes comma thousands separators from numbers
+//! - `zerodash` / `zero-dash`: Converts dash character to zero for numeric fields  
 //! - `fixed-true/false/zero`: Returns fixed boolean or numeric values
 //! - `booleanfalse/true`: Returns boolean strings
 //! - `date-monthname-day-year-en` / `datemonthdayyearen`: Converts "Month Day, Year" to ISO 8601
@@ -314,6 +315,24 @@ pub fn boolean_false(_value: &str) -> Result<String, TransformationError> {
 /// Returns "true" (boolean true)
 pub fn boolean_true(_value: &str) -> Result<String, TransformationError> {
     Ok("true".to_string())
+}
+
+/// Converts dash (-) to zero (0) for numeric fields
+///
+/// This is a standard iXBRL transformation used when a dash represents
+/// a zero value in financial statements.
+///
+/// ## Examples
+/// - "-" → "0"
+/// - "  -  " → "0" (with whitespace)
+pub fn zero_dash(value: &str) -> Result<String, TransformationError> {
+    let trimmed = value.trim();
+    if trimmed == "-" || trimmed == "—" || trimmed == "–" {
+        Ok("0".to_string())
+    } else {
+        // If it's not a dash, return the original value trimmed
+        Ok(trimmed.to_string())
+    }
 }
 
 /// Returns positive infinity for float/double types
@@ -1065,6 +1084,8 @@ static IXT_REGISTRY_V4: Lazy<TransformationRegistry> = Lazy::new(|| {
     m.insert("fixed-false", fixed_false as Transformation);
     m.insert("fixed-true", fixed_true as Transformation);
     m.insert("fixed-zero", fixed_zero as Transformation);
+    m.insert("zerodash", zero_dash as Transformation);
+    m.insert("zero-dash", zero_dash as Transformation); // Alternative spelling
     m.insert("num-dot-decimal", num_dot_decimal as Transformation);
     m.insert("numdotdecimal", num_dot_decimal as Transformation); // Spelling variant
     m.insert("booleanfalse", boolean_false as Transformation);
@@ -1216,6 +1237,27 @@ mod tests {
         assert_eq!(num_dot_decimal("1,000,000").unwrap(), "1000000");
         assert_eq!(num_dot_decimal("123,456.789").unwrap(), "123456.789");
         assert_eq!(num_dot_decimal("42").unwrap(), "42");
+    }
+
+    #[test]
+    fn test_zero_dash() {
+        // Standard hyphen-minus
+        assert_eq!(zero_dash("-").unwrap(), "0");
+        
+        // Em dash
+        assert_eq!(zero_dash("—").unwrap(), "0");
+        
+        // En dash
+        assert_eq!(zero_dash("–").unwrap(), "0");
+        
+        // With whitespace
+        assert_eq!(zero_dash("  -  ").unwrap(), "0");
+        assert_eq!(zero_dash("\t-\t").unwrap(), "0");
+        
+        // Non-dash values should pass through
+        assert_eq!(zero_dash("123").unwrap(), "123");
+        assert_eq!(zero_dash("0").unwrap(), "0");
+        assert_eq!(zero_dash("  456  ").unwrap(), "456"); // trimmed
     }
 
     #[test]
