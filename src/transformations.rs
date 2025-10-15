@@ -1243,17 +1243,17 @@ mod tests {
     fn test_zero_dash() {
         // Standard hyphen-minus
         assert_eq!(zero_dash("-").unwrap(), "0");
-        
+
         // Em dash
         assert_eq!(zero_dash("—").unwrap(), "0");
-        
+
         // En dash
         assert_eq!(zero_dash("–").unwrap(), "0");
-        
+
         // With whitespace
         assert_eq!(zero_dash("  -  ").unwrap(), "0");
         assert_eq!(zero_dash("\t-\t").unwrap(), "0");
-        
+
         // Non-dash values should pass through
         assert_eq!(zero_dash("123").unwrap(), "123");
         assert_eq!(zero_dash("0").unwrap(), "0");
