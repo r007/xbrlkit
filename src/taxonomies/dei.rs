@@ -155,6 +155,10 @@ pub struct DocumentInfo {
     /// Flag indicating written communications.
     #[serde(rename = "dei:WrittenCommunications", default)]
     pub written_communications: Option<bool>,
+
+    /// Text block for documents incorporated by reference.
+    #[serde(rename = "dei:DocumentsIncorporatedByReferenceTextBlock", default)]
+    pub documents_incorporated_by_reference_text_block: Option<String>,
 }
 
 /// Contains information about the reporting entity, such as its name, CIK, and filer status.

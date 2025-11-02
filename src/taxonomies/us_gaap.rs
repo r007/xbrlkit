@@ -84,6 +84,14 @@ pub struct BalanceSheet {
     #[serde(rename = "us-gaap:DepositAssets", default)]
     pub deposit_assets: Option<f64>,
 
+    /// Other receivables not elsewhere classified.
+    #[serde(rename = "us-gaap:OtherReceivables", default)]
+    pub other_receivables: Option<f64>,
+
+    /// Other prepaid expenses classified as noncurrent.
+    #[serde(rename = "us-gaap:PrepaidExpenseOtherNoncurrent", default)]
+    pub prepaid_expense_other_noncurrent: Option<f64>,
+
     // --- Liabilities Section ---
     /// Total liabilities of the entity.
     #[serde(rename = "us-gaap:Liabilities", default)]
@@ -140,6 +148,18 @@ pub struct BalanceSheet {
     /// Other notes payable due within one year.
     #[serde(rename = "us-gaap:OtherNotesPayableCurrent", default)]
     pub other_notes_payable_current: Option<f64>,
+
+    /// Other notes payable (general, not classified by maturity).
+    #[serde(rename = "us-gaap:OtherNotesPayable", default)]
+    pub other_notes_payable: Option<f64>,
+
+    /// Interest payable, current and noncurrent.
+    #[serde(rename = "us-gaap:InterestPayableCurrentAndNoncurrent", default)]
+    pub interest_payable_current_and_noncurrent: Option<f64>,
+
+    /// Long-term debt.
+    #[serde(rename = "us-gaap:LongTermDebt", default)]
+    pub long_term_debt: Option<f64>,
 
     /// Deferred compensation liability classified as non-current.
     #[serde(
@@ -224,6 +244,22 @@ pub struct IncomeStatement {
     #[serde(rename = "us-gaap:AdministrativeFeesExpense", default)]
     pub administrative_fees_expense: Option<f64>,
 
+    /// Professional and contract services expense.
+    #[serde(rename = "us-gaap:ProfessionalAndContractServicesExpense", default)]
+    pub professional_and_contract_services_expense: Option<f64>,
+
+    /// Professional fees.
+    #[serde(rename = "us-gaap:ProfessionalFees", default)]
+    pub professional_fees: Option<f64>,
+
+    /// Travel and entertainment expense.
+    #[serde(rename = "us-gaap:TravelAndEntertainmentExpense", default)]
+    pub travel_and_entertainment_expense: Option<f64>,
+
+    /// SPAC sponsor fees.
+    #[serde(rename = "us-gaap:SponsorFees", default)]
+    pub sponsor_fees: Option<f64>,
+
     /// Income tax expense or benefit.
     #[serde(rename = "us-gaap:IncomeTaxExpenseBenefit", default)]
     pub income_tax_expense_benefit: Option<f64>,
@@ -238,6 +274,10 @@ pub struct IncomeStatement {
     /// Non-operating income and expenses.
     #[serde(rename = "us-gaap:NonoperatingIncomeExpense", default)]
     pub nonoperating_income_expense: Option<f64>,
+
+    /// Non-operating interest expense.
+    #[serde(rename = "us-gaap:InterestExpenseNonoperating", default)]
+    pub interest_expense_nonoperating: Option<f64>,
 
     /// Interest and other income.
     #[serde(rename = "us-gaap:InterestAndOtherIncome", default)]
@@ -254,6 +294,14 @@ pub struct IncomeStatement {
     /// Investment income from dividends.
     #[serde(rename = "us-gaap:InvestmentIncomeDividend", default)]
     pub investment_income_dividend: Option<f64>,
+
+    /// Gain or loss on investments.
+    #[serde(rename = "us-gaap:GainLossOnInvestments", default)]
+    pub gain_loss_on_investments: Option<f64>,
+
+    /// Fair value adjustment of warrants.
+    #[serde(rename = "us-gaap:FairValueAdjustmentOfWarrants", default)]
+    pub fair_value_adjustment_of_warrants: Option<f64>,
 
     /// Other underwriting expenses.
     #[serde(rename = "us-gaap:OtherUnderwritingExpense", default)]
@@ -310,6 +358,13 @@ pub struct IncomeStatement {
         default
     )]
     pub weighted_average_shares_outstanding_diluted: Option<f64>,
+
+    /// Antidilutive securities excluded from computation of earnings per share.
+    #[serde(
+        rename = "us-gaap:AntidilutiveSecuritiesExcludedFromComputationOfEarningsPerShareAmount",
+        default
+    )]
+    pub antidilutive_securities_excluded_from_eps: Option<f64>,
 }
 
 /// Represents key data points from the Statement of Cash Flows.
@@ -370,6 +425,18 @@ pub struct CashFlowStatement {
     #[serde(rename = "us-gaap:IncreaseDecreaseInPrepaidExpense", default)]
     pub increase_decrease_in_prepaid_expense: Option<f64>,
 
+    /// Increase or decrease in accounts payable.
+    #[serde(rename = "us-gaap:IncreaseDecreaseInAccountsPayable", default)]
+    pub increase_decrease_in_accounts_payable: Option<f64>,
+
+    /// Increase or decrease in deposits outstanding.
+    #[serde(rename = "us-gaap:IncreaseDecreaseInDepositsOutstanding", default)]
+    pub increase_decrease_in_deposits_outstanding: Option<f64>,
+
+    /// Increase or decrease in amounts due to affiliates.
+    #[serde(rename = "us-gaap:IncreaseDecreaseInDueToAffiliates", default)]
+    pub increase_decrease_in_due_to_affiliates: Option<f64>,
+
     /// Period increase/decrease in cash including exchange rate effect.
     #[serde(
         rename = "us-gaap:CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalentsPeriodIncreaseDecreaseIncludingExchangeRateEffect",
@@ -407,6 +474,18 @@ pub struct CashFlowStatement {
     /// Repayments of notes payable.
     #[serde(rename = "us-gaap:RepaymentsOfNotesPayable", default)]
     pub repayments_of_notes_payable: Option<f64>,
+
+    /// Payment of financing and stock issuance costs (combined).
+    #[serde(rename = "us-gaap:PaymentOfFinancingAndStockIssuanceCosts", default)]
+    pub payment_of_financing_and_stock_issuance_costs: Option<f64>,
+
+    /// Proceeds from stock options exercised.
+    #[serde(rename = "us-gaap:ProceedsFromStockOptionsExercised", default)]
+    pub proceeds_from_stock_options_exercised: Option<f64>,
+
+    /// Payments for repurchase of common stock.
+    #[serde(rename = "us-gaap:PaymentsForRepurchaseOfCommonStock", default)]
+    pub payments_for_repurchase_of_common_stock: Option<f64>,
 }
 
 /// Represents detailed information about stock issuances and equity transactions.
@@ -455,6 +534,13 @@ pub struct EquityDetails {
     )]
     pub sale_of_stock_number_of_shares_issued: Option<f64>,
 
+    /// Consideration received from stock sale transaction.
+    #[serde(
+        rename = "us-gaap:SaleOfStockConsiderationReceivedOnTransaction",
+        default
+    )]
+    pub sale_of_stock_consideration_received_on_transaction: Option<f64>,
+
     /// Shares issued during period - new issues.
     #[serde(rename = "us-gaap:StockIssuedDuringPeriodSharesNewIssues", default)]
     pub stock_issued_during_period_shares_new_issues: Option<f64>,
@@ -466,6 +552,20 @@ pub struct EquityDetails {
     )]
     pub stock_issued_during_period_shares_share_based_compensation: Option<f64>,
 
+    /// Shares issued during period - conversion of convertible securities.
+    #[serde(
+        rename = "us-gaap:StockIssuedDuringPeriodSharesConversionOfConvertibleSecurities",
+        default
+    )]
+    pub stock_issued_during_period_shares_conversion_of_convertible_securities: Option<f64>,
+
+    /// Restricted stock awards issued (gross).
+    #[serde(
+        rename = "us-gaap:StockIssuedDuringPeriodSharesRestrictedStockAwardGross",
+        default
+    )]
+    pub stock_issued_during_period_shares_restricted_stock_award_gross: Option<f64>,
+
     /// Other shares issued during period.
     #[serde(rename = "us-gaap:StockIssuedDuringPeriodSharesOther", default)]
     pub stock_issued_during_period_shares_other: Option<f64>,
@@ -474,6 +574,20 @@ pub struct EquityDetails {
     #[serde(rename = "us-gaap:StockIssuedDuringPeriodValueNewIssues", default)]
     pub stock_issued_during_period_value_new_issues: Option<f64>,
 
+    /// Value of stock issued during period from conversion of convertible securities.
+    #[serde(
+        rename = "us-gaap:StockIssuedDuringPeriodValueConversionOfConvertibleSecurities",
+        default
+    )]
+    pub stock_issued_during_period_value_conversion_of_convertible_securities: Option<f64>,
+
+    /// Value of share-based compensation forfeited during period.
+    #[serde(
+        rename = "us-gaap:StockIssuedDuringPeriodValueShareBasedCompensationForfeited",
+        default
+    )]
+    pub stock_issued_during_period_value_share_based_compensation_forfeited: Option<f64>,
+
     /// Value of other stock issued during period.
     #[serde(rename = "us-gaap:StockIssuedDuringPeriodValueOther", default)]
     pub stock_issued_during_period_value_other: Option<f64>,
@@ -481,6 +595,10 @@ pub struct EquityDetails {
     /// General stock issued amount.
     #[serde(rename = "us-gaap:StockIssued1", default)]
     pub stock_issued: Option<f64>,
+
+    /// Shares issued (alternative field).
+    #[serde(rename = "us-gaap:SharesIssued", default)]
+    pub shares_issued_alt: Option<f64>,
 
     /// Shares issued during period for services.
     #[serde(
@@ -502,6 +620,28 @@ pub struct EquityDetails {
         default
     )]
     pub stock_issued_during_period_value_issued_for_services: Option<f64>,
+
+    /// Shares redeemed or called during period.
+    #[serde(rename = "us-gaap:StockRedeemedOrCalledDuringPeriodShares", default)]
+    pub stock_redeemed_or_called_during_period_shares: Option<f64>,
+
+    /// Shares repurchased and retired during period.
+    #[serde(
+        rename = "us-gaap:StockRepurchasedAndRetiredDuringPeriodShares",
+        default
+    )]
+    pub stock_repurchased_and_retired_during_period_shares: Option<f64>,
+
+    /// Value of stock repurchased and retired during period.
+    #[serde(
+        rename = "us-gaap:StockRepurchasedAndRetiredDuringPeriodValue",
+        default
+    )]
+    pub stock_repurchased_and_retired_during_period_value: Option<f64>,
+
+    /// Amount converted in stock conversion.
+    #[serde(rename = "us-gaap:ConversionOfStockAmountConverted1", default)]
+    pub conversion_of_stock_amount_converted: Option<f64>,
 
     /// Adjustments to APIC for warrant issuance.
     #[serde(
@@ -577,6 +717,14 @@ pub struct TemporaryEquityAndWarrants {
     #[serde(rename = "us-gaap:TemporaryEquityRedemptionPricePerShare", default)]
     pub temporary_equity_redemption_price_per_share: Option<f64>,
 
+    /// Par or stated value per share for temporary equity.
+    #[serde(rename = "us-gaap:TemporaryEquityParOrStatedValuePerShare", default)]
+    pub temporary_equity_par_or_stated_value_per_share: Option<f64>,
+
+    /// Redemption price per share for preferred stock.
+    #[serde(rename = "us-gaap:PreferredStockRedemptionPricePerShare", default)]
+    pub preferred_stock_redemption_price_per_share: Option<f64>,
+
     /// Value of temporary equity stock issued during period (new issues).
     #[serde(
         rename = "us-gaap:TemporaryEquityStockIssuedDuringPeriodValueNewIssues",
@@ -649,6 +797,13 @@ pub struct BusinessCombinations {
     /// Supplemental deferred purchase price.
     #[serde(rename = "us-gaap:SupplementalDeferredPurchasePrice", default)]
     pub supplemental_deferred_purchase_price: Option<f64>,
+
+    /// Segment allocation table for business combination (text block).
+    #[serde(
+        rename = "us-gaap:BusinessCombinationSegmentAllocationTableTextBlock",
+        default
+    )]
+    pub business_combination_segment_allocation_table: Option<String>,
 }
 
 /// Represents debt instruments and conversion details.
@@ -658,6 +813,14 @@ pub struct DebtDetails {
     #[serde(rename = "us-gaap:DebtInstrumentFaceAmount", default)]
     pub debt_instrument_face_amount: Option<f64>,
 
+    /// Carrying amount of debt instrument.
+    #[serde(rename = "us-gaap:DebtInstrumentCarryingAmount", default)]
+    pub debt_instrument_carrying_amount: Option<f64>,
+
+    /// Stated interest rate percentage on debt instrument.
+    #[serde(rename = "us-gaap:DebtInstrumentInterestRateStatedPercentage", default)]
+    pub debt_instrument_interest_rate_stated_percentage: Option<f64>,
+
     /// Conversion price of convertible debt instrument.
     #[serde(rename = "us-gaap:DebtInstrumentConvertibleConversionPrice1", default)]
     pub debt_convertible_conversion_price: Option<f64>,
@@ -665,6 +828,13 @@ pub struct DebtDetails {
     /// Amount of converted instrument in debt conversion.
     #[serde(rename = "us-gaap:DebtConversionConvertedInstrumentAmount1", default)]
     pub debt_conversion_converted_amount: Option<f64>,
+
+    /// Debt issuance costs incurred during noncash or partial noncash transaction.
+    #[serde(
+        rename = "us-gaap:DebtIssuanceCostsIncurredDuringNoncashOrPartialNoncashTransaction",
+        default
+    )]
+    pub debt_issuance_costs_incurred_during_noncash_transaction: Option<f64>,
 
     /// Notes issued value.
     #[serde(rename = "us-gaap:NotesIssued1", default)]
@@ -812,6 +982,13 @@ pub struct Narratives {
     #[serde(rename = "us-gaap:ConsolidationPolicyTextBlock", default)]
     pub consolidation_policy: Option<String>,
 
+    /// Combined basis of presentation and significant accounting policies text block.
+    #[serde(
+        rename = "us-gaap:BasisOfPresentationAndSignificantAccountingPoliciesTextBlock",
+        default
+    )]
+    pub basis_of_presentation_and_significant_accounting_policies: Option<String>,
+
     /// Text block describing subsequent events.
     #[serde(rename = "us-gaap:SubsequentEventsTextBlock", default)]
     pub subsequent_events: Option<String>,
@@ -831,6 +1008,14 @@ pub struct Narratives {
     /// Text block describing income tax policy.
     #[serde(rename = "us-gaap:IncomeTaxPolicyTextBlock", default)]
     pub income_tax_policy: Option<String>,
+
+    /// Text block describing derivatives policy.
+    #[serde(rename = "us-gaap:DerivativesPolicyTextBlock", default)]
+    pub derivatives_policy: Option<String>,
+
+    /// Text block describing investment policy.
+    #[serde(rename = "us-gaap:InvestmentPolicyTextBlock", default)]
+    pub investment_policy: Option<String>,
 
     /// Text block describing new accounting pronouncements policy.
     #[serde(
