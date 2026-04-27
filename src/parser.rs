@@ -268,11 +268,25 @@ pub fn extract_ixbrl_data(html_content: &str) -> Result<Xbrl> {
     Ok(xbrl)
 }
 
-/// Parses an individual iXBRL fact element
+/// Parses an individual iXBRL fact element, including any nested iXBRL facts.
 ///
 /// Extracts XBRL fact data from inline tags such as `<ix:nonfraction>`, `<ix:nonnumeric>`,
 /// and `<ix:fraction>`. These tags contain both attributes (context reference, unit reference, etc.)
 /// and text content (the actual value).
+///
+/// ## Nested Element Handling
+///
+/// Some SEC filings nest `ix:nonnumeric` elements inside each other to share text:
+///
+/// ```xml
+/// <ix:nonnumeric format="ixt:date-monthname-day-year-en" name="dei:DocumentPeriodEndDate">
+///     September 30, <ix:nonnumeric name="dei:DocumentFiscalYearFocus">2025</ix:nonnumeric>
+/// </ix:nonnumeric>
+/// ```
+///
+/// In this case the outer element needs the full concatenated text `"September 30, 2025"`
+/// to apply its format transformation.  The inner element is also extracted as a separate
+/// fact (`DocumentFiscalYearFocus = "2025"`) and returned alongside the outer one.
 ///
 /// # Arguments
 ///
@@ -281,43 +295,15 @@ pub fn extract_ixbrl_data(html_content: &str) -> Result<Xbrl> {
 ///
 /// # Returns
 ///
-/// * `Result<(Fact, bool)>` - Tuple of (parsed Fact, is_nil flag)
-///
-/// # Attribute Handling
-///
-/// - `name`: The full concept name (e.g., "us-gaap:Cash")
-/// - `contextref`/`contextRef`: Reference to a context definition
-/// - `unitref`/`unitRef`: Reference to a unit definition
-/// - `decimals`: Decimal precision indicator
-/// - `scale`: Power of 10 to multiply the value by
-/// - `nil`/`xsi:nil`: Indicates an explicit nil value
-/// - `id`: Unique identifier for this fact instance
+/// * `Result<(Vec<Fact>, bool)>` - Tuple of (all facts: outer + any nested, is_nil flag for outer)
 ///
 /// # Value Processing
 ///
-/// 1. Extracts text content from the tag
+/// 1. Collects all text content, including text from nested ix elements
 /// 2. Handles HTML entities (falls back to raw text if unescape fails)
-/// 3. Removes commas from numeric values (e.g., "4,921" -> "4921")
-/// 4. Applies scale transformation (multiplies by 10^scale)
-/// 5. Extracts local name from full name (e.g., "us-gaap:Cash" -> "Cash")
-///
-/// # Example iXBRL Fact
-///
-/// ```xml
-/// <ix:nonfraction name="us-gaap:Cash" contextref="cref_71270353"
-///                 unitref="uref_826444437" scale="0" decimals="0"
-///                 format="ixt:num-dot-decimal" id="ixv-3389">
-///     4,921
-/// </ix:nonfraction>
-/// ```
-///
-/// This would be parsed into a Fact with:
-/// - `full_name`: "us-gaap:Cash"
-/// - `local_name`: "Cash"
-/// - `context_ref`: Some("cref_71270353")
-/// - `unit_ref`: Some("uref_826444437")
-/// - `value`: XbrlValue::String("4921") (after comma removal)
-fn parse_ix_fact(e: &BytesStart, reader: &mut Reader<&[u8]>) -> Result<(Fact, bool)> {
+/// 3. Applies format transformations (e.g., `ixt:date-monthname-day-year-en`)
+/// 4. Applies scale attribute to numeric values
+fn parse_ix_fact(e: &BytesStart, reader: &mut Reader<&[u8]>) -> Result<(Vec<Fact>, bool)> {
     // Use the unified attribute parser
     let (mut fact, is_nil, scale) = parse_fact_attributes_common(e, true);
 
@@ -328,52 +314,162 @@ fn parse_ix_fact(e: &BytesStart, reader: &mut Reader<&[u8]>) -> Result<(Fact, bo
         fact.local_name = fact.full_name.clone();
     }
 
-    // Get value from text node if not nil
+    // Collect all facts (this element + any nested ix facts found during traversal)
+    let mut all_facts = Vec::new();
+
     if !is_nil {
-        let mut value_buf = Vec::new();
-        match reader.read_event_into(&mut value_buf)? {
+        // Determine the closing tag name for this element so we can detect its end.
+        let outer_tag_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+
+        // Collect text from the element body.  When a nested ix:non* element is encountered we:
+        //   a) recurse to extract ITS value (which may also have sub-nesting), collecting all
+        //      of its text for our own concatenated value;
+        //   b) register the nested element as an independent fact in `all_facts`.
+        let (raw_text_value, nested_facts) = collect_ix_text_content(reader, &outer_tag_name)?;
+
+        // Nested facts are pushed first so the outer fact ends up last and has priority
+        // in later deduplication (more specific outer context wins over inner).
+        all_facts.extend(nested_facts);
+
+        // --- TRANSFORMATION LOGIC ---
+        let transformed_value = if let Some(format) = &fact.format {
+            transformations::apply_transformation(&raw_text_value, format)
+                .unwrap_or_else(|_| raw_text_value.clone())
+        } else {
+            raw_text_value
+        };
+
+        // Apply scale attribute if present
+        let final_value = if let Some(s) = scale {
+            if let Ok(num) = transformed_value.parse::<f64>() {
+                (num * 10f64.powi(s)).to_string()
+            } else {
+                transformed_value
+            }
+        } else {
+            transformed_value
+        };
+
+        fact.value = XbrlValue::String(final_value);
+    }
+
+    // The outer fact is always the last element so callers that want "the primary fact"
+    // can simply use `facts.last()`.
+    all_facts.push(fact);
+
+    Ok((all_facts, is_nil))
+}
+
+/// Collects the full text content of an iXBRL element, consuming events up to (and
+/// including) its matching end tag.
+///
+/// Returns `(concatenated_text, nested_ix_facts)`.  For each nested `ix:non*` element
+/// encountered, its text is appended to the accumulator AND the nested fact is added to
+/// the returned vec so it can be registered independently by the caller.
+fn collect_ix_text_content(
+    reader: &mut Reader<&[u8]>,
+    outer_tag: &str,
+) -> Result<(String, Vec<Fact>)> {
+    let mut text_accumulator = String::new();
+    let mut nested_facts: Vec<Fact> = Vec::new();
+    let mut buf = Vec::new();
+    let outer_tag_lower = outer_tag.to_lowercase();
+
+    loop {
+        buf.clear();
+        let event = reader.read_event_into(&mut buf)?;
+
+        match event {
             Event::Text(text) => {
-                let raw_text_value = text
+                let chunk = text
                     .unescape()
                     .unwrap_or_else(|_| {
                         Cow::Owned(String::from_utf8_lossy(text.as_ref()).into_owned())
                     })
                     .into_owned();
+                text_accumulator.push_str(&chunk);
+            }
+            Event::Start(nested_e) => {
+                let nested_tag = String::from_utf8_lossy(nested_e.name().as_ref()).to_string();
+                let nested_lower = nested_tag.to_lowercase();
 
-                // --- TRANSFORMATION LOGIC ---
-                // Apply format-specific transformations (e.g., num-dot-decimal, boolballotbox)
-                let transformed_value = if let Some(format) = &fact.format {
-                    transformations::apply_transformation(&raw_text_value, format)
-                        .unwrap_or_else(|_| raw_text_value.clone()) // On error, fall back to raw value
-                } else {
-                    raw_text_value
-                };
+                if matches!(
+                    nested_lower.as_str(),
+                    "ix:nonfraction" | "ix:fraction" | "ix:nonnumeric"
+                ) {
+                    // Recursively collect the nested ix fact.
+                    let (nested_text, deeper_facts) = collect_ix_text_content(reader, &nested_tag)?;
 
-                // Apply scale attribute if present (e.g., scale="6" means multiply by 10^6)
-                let final_value = if let Some(s) = scale {
-                    if let Ok(num) = transformed_value.parse::<f64>() {
-                        let scaled_num = num * 10f64.powi(s);
-                        scaled_num.to_string()
-                    } else {
-                        transformed_value
+                    // Append nested text to our accumulator (contributes to outer value).
+                    // `trim_text(true)` strips trailing whitespace from each Text event,
+                    // so "September 30, " becomes "September 30," before we see it.
+                    // Re-insert a space separator when neither side already has one.
+                    if !text_accumulator.is_empty()
+                        && !text_accumulator.ends_with(char::is_whitespace)
+                        && !nested_text.is_empty()
+                        && !nested_text.starts_with(char::is_whitespace)
+                    {
+                        text_accumulator.push(' ');
                     }
-                } else {
-                    transformed_value
-                };
+                    text_accumulator.push_str(&nested_text);
 
-                fact.value = XbrlValue::String(final_value);
+                    // Build the nested fact and register it independently.
+                    let (nested_all, _) = build_ix_fact_from_attrs(&nested_e, &nested_text)?;
+                    nested_facts.extend(deeper_facts);
+                    nested_facts.extend(nested_all);
+                } else {
+                    // Non-ix nested element: skip to its end without collecting text,
+                    // since HTML formatting tags (<span>, <b>, etc.) shouldn't contribute.
+                    reader.read_to_end_into(nested_e.name(), &mut Vec::new())?;
+                }
             }
-            _ => {
-                fact.value = XbrlValue::Nil;
+            Event::End(end_e) => {
+                let end_tag = String::from_utf8_lossy(end_e.name().as_ref()).to_string();
+                if end_tag.to_lowercase() == outer_tag_lower {
+                    break;
+                }
+                // Mismatched end tag (malformed HTML) — ignore and continue.
             }
+            Event::Eof => break,
+            _ => { /* ignore other events */ }
         }
     }
 
-    // Note: We do NOT consume to the end tag here. We let the main event loop handle that.
-    // This allows nested facts (if they exist) to be processed by the main loop.
-    // The main loop will skip the End event for this tag naturally.
+    Ok((text_accumulator, nested_facts))
+}
 
-    Ok((fact, is_nil))
+/// Builds a `Fact` (and its value) from an already-parsed `BytesStart` and pre-collected text.
+/// Used when recursing into nested ix elements after text has been gathered by the parent.
+fn build_ix_fact_from_attrs(e: &BytesStart, text: &str) -> Result<(Vec<Fact>, bool)> {
+    let (mut fact, is_nil, scale) = parse_fact_attributes_common(e, true);
+
+    if let Some(idx) = fact.full_name.find(':') {
+        fact.local_name = fact.full_name[idx + 1..].to_string();
+    } else {
+        fact.local_name = fact.full_name.clone();
+    }
+
+    if !is_nil {
+        let transformed = if let Some(format) = &fact.format {
+            transformations::apply_transformation(text, format).unwrap_or_else(|_| text.to_string())
+        } else {
+            text.to_string()
+        };
+
+        let final_value = if let Some(s) = scale {
+            if let Ok(num) = transformed.parse::<f64>() {
+                (num * 10f64.powi(s)).to_string()
+            } else {
+                transformed
+            }
+        } else {
+            transformed
+        };
+
+        fact.value = XbrlValue::String(final_value);
+    }
+
+    Ok((vec![fact], is_nil))
 }
 
 /// A generic, unified event processing loop for both XBRL and iXBRL
@@ -432,8 +528,10 @@ where
                     lowercase_tag.as_str(),
                     "ix:nonfraction" | "ix:fraction" | "ix:nonnumeric"
                 ) {
-                    let (fact, _) = parse_ix_fact(&e, reader)?;
-                    xbrl.facts.push(fact);
+                    // parse_ix_fact now consumes up to (and including) the closing tag, so the
+                    // main loop does NOT need to handle the End event for this element.
+                    let (facts, _) = parse_ix_fact(&e, reader)?;
+                    xbrl.facts.extend(facts);
                     continue;
                 }
 

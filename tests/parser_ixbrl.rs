@@ -545,3 +545,51 @@ fn test_performance_large_document() {
         "Parser should complete in reasonable time"
     );
 }
+
+/// Regression test for nested ix:nonnumeric elements where an outer element with a
+/// format transformation contains an inner ix:nonnumeric that holds part of the text.
+///
+/// Real-world example from SEC filings:
+/// ```html
+/// <ix:nonnumeric format="ixt:date-monthname-day-year-en" name="dei:DocumentPeriodEndDate">
+///   September 30, <ix:nonnumeric name="dei:DocumentFiscalYearFocus">2025</ix:nonnumeric>
+/// </ix:nonnumeric>
+/// ```
+///
+/// The outer element must receive the full text "September 30, 2025" so that the
+/// date transformation succeeds (producing "2025-09-30").  The inner element must
+/// also be registered independently with value "2025".
+#[test]
+fn test_nested_ixbrl_date_extraction() {
+    let html = r#"<html xmlns:ix="http://www.xbrl.org/2013/inlineXBRL">
+<body>
+<div>For the quarterly period ended
+<ix:nonnumeric contextRef="c0" format="ixt:date-monthname-day-year-en" name="dei:DocumentPeriodEndDate" id="ixv-2998">September 30, <ix:nonnumeric contextRef="c0" name="dei:DocumentFiscalYearFocus" id="ixv-2999">2025</ix:nonnumeric></ix:nonnumeric>
+</div>
+</body>
+</html>"#;
+
+    let xbrl = extract_ixbrl_data(html).expect("should parse iXBRL");
+
+    let period_end = xbrl
+        .facts
+        .iter()
+        .find(|f| f.full_name == "dei:DocumentPeriodEndDate")
+        .expect("DocumentPeriodEndDate fact must be present");
+    assert_eq!(
+        period_end.value,
+        XbrlValue::String("2025-09-30".to_string()),
+        "DocumentPeriodEndDate should be transformed to ISO date"
+    );
+
+    let fiscal_year = xbrl
+        .facts
+        .iter()
+        .find(|f| f.full_name == "dei:DocumentFiscalYearFocus")
+        .expect("DocumentFiscalYearFocus fact must be present");
+    assert_eq!(
+        fiscal_year.value,
+        XbrlValue::String("2025".to_string()),
+        "DocumentFiscalYearFocus should be extracted as '2025'"
+    );
+}
