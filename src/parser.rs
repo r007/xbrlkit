@@ -350,7 +350,13 @@ fn parse_ix_fact(e: &BytesStart, reader: &mut Reader<&[u8]>) -> Result<(Vec<Fact
             transformed_value
         };
 
-        fact.value = XbrlValue::String(final_value);
+        // Only set a String value when there is actual content. Empty strings
+        // occur when the text is inside a non-ix HTML element (e.g. <span>)
+        // that collect_ix_text_content skips. Leaving the value as the default
+        // XbrlValue::Nil avoids downstream "could not parse '' as bool/f64" errors.
+        if !final_value.trim().is_empty() {
+            fact.value = XbrlValue::String(final_value);
+        }
     }
 
     // The outer fact is always the last element so callers that want "the primary fact"
@@ -466,7 +472,9 @@ fn build_ix_fact_from_attrs(e: &BytesStart, text: &str) -> Result<(Vec<Fact>, bo
             transformed
         };
 
-        fact.value = XbrlValue::String(final_value);
+        if !final_value.trim().is_empty() {
+            fact.value = XbrlValue::String(final_value);
+        }
     }
 
     Ok((vec![fact], is_nil))

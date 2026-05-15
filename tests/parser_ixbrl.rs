@@ -546,6 +546,122 @@ fn test_performance_large_document() {
     );
 }
 
+/// Regression test: ix elements whose text content is wrapped inside a non-ix HTML
+/// element (e.g. `<span>`) should produce `XbrlValue::Nil`, not `XbrlValue::String("")`.
+///
+/// The bug manifested as WARN log messages in production:
+///   "For field 'dei:DocumentAnnualReport': could not parse value '' as bool"
+///   "For field 'us-gaap:PreferredStockValue': could not parse value '' as f64"
+///
+/// Root cause: `collect_ix_text_content` skips non-ix nested HTML elements
+/// (`<span>`, `<b>`, etc.) without collecting their text.  When ALL the text is
+/// inside such an element the accumulator stays empty and the old code stored
+/// `XbrlValue::String("")` rather than keeping the default `XbrlValue::Nil`.
+#[test]
+fn test_empty_text_from_html_wrapped_value_is_nil() {
+    // Simulate the SEC-filing pattern where the visible value lives inside a
+    // <span> (or similar) that the iXBRL spec says should be skipped:
+    //
+    //   <ix:nonnumeric name="dei:DocumentAnnualReport" format="ixt-sec:boolballotbox">
+    //     <span>☑</span>
+    //   </ix:nonnumeric>
+    //
+    // We also cover the explicit xsi:nil="true" case and a normal direct-text fact.
+    let html = r#"<html xmlns:ix="http://www.xbrl.org/2013/inlineXBRL"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+<head>
+  <ix:header>
+    <ix:references/>
+    <ix:resources>
+      <xbrli:context id="c0" xmlns:xbrli="http://www.xbrl.org/2003/instance">
+        <xbrli:entity>
+          <xbrli:identifier scheme="http://www.sec.gov/CIK">0002049662</xbrli:identifier>
+        </xbrli:entity>
+        <xbrli:period>
+          <xbrli:instant>2025-12-31</xbrli:instant>
+        </xbrli:period>
+      </xbrli:context>
+      <xbrli:unit id="usd" xmlns:xbrli="http://www.xbrl.org/2003/instance">
+        <xbrli:measure>iso4217:USD</xbrli:measure>
+      </xbrli:unit>
+    </ix:resources>
+  </ix:header>
+</head>
+<body>
+  <!-- Case 1: value is inside a <span> — collect_ix_text_content skips it,
+       so the accumulator stays ""; should be Nil not String(""). -->
+  <ix:nonNumeric contextRef="c0" format="ixt-sec:boolballotbox"
+                 name="dei:DocumentAnnualReport" id="ixv-1">
+    <span style="font-weight:bold">&#9746;</span>
+  </ix:nonNumeric>
+
+  <!-- Case 2: same bug for a numeric field with value in a <span> -->
+  <ix:nonFraction contextRef="c0" unitRef="usd" decimals="0"
+                  name="us-gaap:PreferredStockValue" id="ixv-2">
+    <span></span>
+  </ix:nonFraction>
+
+  <!-- Case 3: explicit xsi:nil="true" — must remain Nil -->
+  <ix:nonFraction contextRef="c0" unitRef="usd" decimals="0"
+                  name="us-gaap:CommitmentsAndContingencies"
+                  xsi:nil="true" id="hidden-fact-0"></ix:nonFraction>
+
+  <!-- Case 4: normal direct-text fact — must still work correctly -->
+  <ix:nonNumeric contextRef="c0" name="dei:EntityName" id="ixv-4">Cartesian Growth Corp III</ix:nonNumeric>
+</body>
+</html>"#;
+
+    let xbrl = extract_ixbrl_data(html).expect("should parse iXBRL without error");
+
+    // Case 1: span-wrapped value → Nil (not String(""))
+    let annual_report = xbrl
+        .facts
+        .iter()
+        .find(|f| f.full_name == "dei:DocumentAnnualReport")
+        .expect("dei:DocumentAnnualReport must be present");
+    assert_eq!(
+        annual_report.value,
+        XbrlValue::Nil,
+        "dei:DocumentAnnualReport with span-wrapped text should be Nil, not String(\"\")"
+    );
+
+    // Case 2: numeric field with span-wrapped value → Nil
+    let preferred = xbrl
+        .facts
+        .iter()
+        .find(|f| f.full_name == "us-gaap:PreferredStockValue")
+        .expect("us-gaap:PreferredStockValue must be present");
+    assert_eq!(
+        preferred.value,
+        XbrlValue::Nil,
+        "us-gaap:PreferredStockValue with span-wrapped text should be Nil, not String(\"\")"
+    );
+
+    // Case 3: explicit xsi:nil → Nil
+    let contingencies = xbrl
+        .facts
+        .iter()
+        .find(|f| f.full_name == "us-gaap:CommitmentsAndContingencies")
+        .expect("us-gaap:CommitmentsAndContingencies must be present");
+    assert_eq!(
+        contingencies.value,
+        XbrlValue::Nil,
+        "xsi:nil=\"true\" element should be Nil"
+    );
+
+    // Case 4: direct text must still be extracted normally
+    let entity_name = xbrl
+        .facts
+        .iter()
+        .find(|f| f.full_name == "dei:EntityName")
+        .expect("dei:EntityName must be present");
+    assert_eq!(
+        entity_name.value,
+        XbrlValue::String("Cartesian Growth Corp III".to_string()),
+        "Normal direct-text fact should still be extracted"
+    );
+}
+
 /// Regression test for nested ix:nonnumeric elements where an outer element with a
 /// format transformation contains an inner ix:nonnumeric that holds part of the text.
 ///
