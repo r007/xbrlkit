@@ -117,6 +117,27 @@ fn is_xbrl_root_element(tag_name: &str) -> bool {
     tag_name == "xbrl" || tag_name.ends_with(":xbrl")
 }
 
+/// Returns the local part of a (possibly) namespace-qualified tag name.
+///
+/// `us-gaap:Assets` → `Assets`, `context` → `context`.
+fn local_part(tag_name: &str) -> &str {
+    match tag_name.rfind(':') {
+        Some(idx) => &tag_name[idx + 1..],
+        None => tag_name,
+    }
+}
+
+/// Checks whether an element carries an `id` attribute (case-insensitive).
+///
+/// Used to distinguish real XBRL `<context>`/`<unit>` elements — which are
+/// required to have an `id` — from unrelated markup that happens to share the
+/// name when scanning an iXBRL HTML document.
+fn has_id_attribute(e: &BytesStart) -> bool {
+    e.attributes()
+        .flatten()
+        .any(|attr| attr.key.as_ref().eq_ignore_ascii_case(b"id"))
+}
+
 /// Parses an XBRL document using a single-pass, event-driven approach
 ///
 /// This function serves as the primary entry point for XBRL parsing. It processes
@@ -579,6 +600,7 @@ fn handle_start_event(
     // Use the unified attribute parser
     let (mut fact, is_explicitly_nil, _) = parse_fact_attributes_common(&e, false);
     // For XML, the concept name IS the tag name
+    fact.local_name = local_part(&tag_name).to_string();
     fact.full_name = tag_name;
 
     if is_explicitly_nil {
@@ -643,6 +665,7 @@ fn handle_empty_event(xbrl: &mut Xbrl, e: BytesStart, tag_name: String) {
     // Use the unified attribute parser
     let (mut fact, _, _) = parse_fact_attributes_common(&e, false);
     // For XML, the concept name IS the tag name
+    fact.local_name = local_part(&tag_name).to_string();
     fact.full_name = tag_name;
     fact.value = XbrlValue::Nil; // Empty elements are considered nil
 
@@ -805,14 +828,22 @@ fn try_handle_metadata_or_link(
     tag_name: &str,
 ) -> Result<bool> {
     let lowercase_tag = tag_name.to_lowercase();
+    // XBRL instance documents declare the instance namespace as the *default*
+    // namespace (`xmlns="http://www.xbrl.org/2003/instance"`), so contexts and
+    // units arrive as bare `<context>`/`<unit>` tags. Matching only on the
+    // prefixed spelling silently dropped every context in those documents, which
+    // in turn disabled all period-aware fact selection. Compare on the local part
+    // instead, and require the mandatory `id` attribute so the unprefixed match
+    // cannot swallow unrelated markup while scanning iXBRL HTML.
+    let local_tag = local_part(&lowercase_tag);
 
-    if lowercase_tag.ends_with(":context") {
+    if local_tag == "context" && has_id_attribute(e) {
         let element_xml = reconstruct_element(reader, e, tag_name)?;
         if let Ok(context) = from_str(&element_xml) {
             xbrl.contexts.push(context);
         }
         Ok(true)
-    } else if lowercase_tag.ends_with(":unit") {
+    } else if local_tag == "unit" && has_id_attribute(e) {
         let element_xml = reconstruct_element(reader, e, tag_name)?;
         if let Ok(unit) = from_str(&element_xml) {
             xbrl.units.push(unit);
