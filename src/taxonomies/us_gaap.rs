@@ -9,1159 +9,1083 @@
 //! The implementation is optimized for SPAC (Special Purpose Acquisition Company) filings
 //! but works with any US-GAAP compliant XBRL document.
 
+use crate::FromXbrl;
+use crate::bind::XbrlDataContext;
 use crate::error::Result;
-use crate::serde_xbrl::{XbrlDataContext, from_data};
 use serde::{Deserialize, Serialize};
 
 /// Represents key data points from the Balance Sheet.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, FromXbrl)]
+#[serde(default)]
+#[xbrl(instant)]
 pub struct BalanceSheet {
+    /// The date these figures are as of.
+    ///
+    /// Set on each of [`Financials::balance_sheets`]. `None` on
+    /// [`Financials::balance_sheet`], whose fields are each the best the filing
+    /// offers and can come from different dates.
+    #[xbrl(period_end)]
+    pub as_of: Option<String>,
+
     // --- Assets Section ---
     /// Total assets of the entity.
-    #[serde(rename = "us-gaap:Assets", default)]
+    #[xbrl(concept = "us-gaap:Assets")]
     pub assets: Option<f64>,
 
     /// Current assets expected to be realized within one year.
-    #[serde(rename = "us-gaap:AssetsCurrent", default)]
+    #[xbrl(concept = "us-gaap:AssetsCurrent")]
     pub assets_current: Option<f64>,
 
     /// Assets held in trust (common in SPACs).
-    #[serde(rename = "us-gaap:AssetsHeldInTrust", default)]
+    #[xbrl(concept = "us-gaap:AssetsHeldInTrust")]
     pub assets_held_in_trust: Option<f64>,
 
     /// Non-current assets held in trust.
-    #[serde(rename = "us-gaap:AssetsHeldInTrustNoncurrent", default)]
+    #[xbrl(concept = "us-gaap:AssetsHeldInTrustNoncurrent")]
     pub assets_held_in_trust_noncurrent: Option<f64>,
 
     /// Cash (not including cash equivalents).
-    #[serde(rename = "us-gaap:Cash", default)]
+    #[xbrl(concept = "us-gaap:Cash")]
     pub cash: Option<f64>,
 
     /// Cash and cash equivalents at carrying value.
-    #[serde(rename = "us-gaap:CashAndCashEquivalentsAtCarryingValue", default)]
+    #[xbrl(concept = "us-gaap:CashAndCashEquivalentsAtCarryingValue")]
     pub cash_and_cash_equivalents: Option<f64>,
 
     /// Cash equivalents at carrying value.
-    #[serde(rename = "us-gaap:CashEquivalentsAtCarryingValue", default)]
+    #[xbrl(concept = "us-gaap:CashEquivalentsAtCarryingValue")]
     pub cash_equivalents_at_carrying_value: Option<f64>,
 
     /// Total of cash, cash equivalents, restricted cash, and restricted cash equivalents.
-    #[serde(
-        rename = "us-gaap:CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents")]
     pub cash_cash_equivalents_restricted_cash: Option<f64>,
 
     /// Marketable securities classified as noncurrent.
-    #[serde(rename = "us-gaap:MarketableSecuritiesNoncurrent", default)]
+    #[xbrl(concept = "us-gaap:MarketableSecuritiesNoncurrent")]
     pub marketable_securities_noncurrent: Option<f64>,
 
     /// Prepaid expenses expected to be consumed within one year.
-    #[serde(rename = "us-gaap:PrepaidExpenseCurrent", default)]
+    #[xbrl(concept = "us-gaap:PrepaidExpenseCurrent")]
     pub prepaid_expense_current: Option<f64>,
 
     /// Prepaid expenses expected to be consumed beyond one year.
-    #[serde(rename = "us-gaap:PrepaidExpenseNoncurrent", default)]
+    #[xbrl(concept = "us-gaap:PrepaidExpenseNoncurrent")]
     pub prepaid_expense_noncurrent: Option<f64>,
 
     /// Prepaid insurance premiums.
-    #[serde(rename = "us-gaap:PrepaidInsurance", default)]
+    #[xbrl(concept = "us-gaap:PrepaidInsurance")]
     pub prepaid_insurance: Option<f64>,
 
     /// Other prepaid expenses not elsewhere classified.
-    #[serde(rename = "us-gaap:OtherPrepaidExpenseCurrent", default)]
+    #[xbrl(concept = "us-gaap:OtherPrepaidExpenseCurrent")]
     pub other_prepaid_expense_current: Option<f64>,
 
     /// Costs deferred in connection with public or private offerings.
-    #[serde(rename = "us-gaap:DeferredOfferingCosts", default)]
+    #[xbrl(concept = "us-gaap:DeferredOfferingCosts")]
     pub deferred_offering_costs: Option<f64>,
 
     /// Deferred costs not elsewhere classified.
-    #[serde(rename = "us-gaap:DeferredCosts", default)]
+    #[xbrl(concept = "us-gaap:DeferredCosts")]
     pub deferred_costs: Option<f64>,
 
     /// Assets held as deposits.
-    #[serde(rename = "us-gaap:DepositAssets", default)]
+    #[xbrl(concept = "us-gaap:DepositAssets")]
     pub deposit_assets: Option<f64>,
 
     /// Other receivables not elsewhere classified.
-    #[serde(rename = "us-gaap:OtherReceivables", default)]
+    #[xbrl(concept = "us-gaap:OtherReceivables")]
     pub other_receivables: Option<f64>,
 
     /// Other prepaid expenses classified as noncurrent.
-    #[serde(rename = "us-gaap:PrepaidExpenseOtherNoncurrent", default)]
+    #[xbrl(concept = "us-gaap:PrepaidExpenseOtherNoncurrent")]
     pub prepaid_expense_other_noncurrent: Option<f64>,
 
     // --- Liabilities Section ---
     /// Total liabilities of the entity.
-    #[serde(rename = "us-gaap:Liabilities", default)]
+    #[xbrl(concept = "us-gaap:Liabilities")]
     pub liabilities: Option<f64>,
 
     /// Current liabilities expected to be settled within one year.
-    #[serde(rename = "us-gaap:LiabilitiesCurrent", default)]
+    #[xbrl(concept = "us-gaap:LiabilitiesCurrent")]
     pub liabilities_current: Option<f64>,
 
     /// Amounts owed to trade creditors within one year.
-    #[serde(rename = "us-gaap:AccountsPayableCurrent", default)]
+    #[xbrl(concept = "us-gaap:AccountsPayableCurrent")]
     pub accounts_payable_current: Option<f64>,
 
     /// Accrued liabilities due within one year.
-    #[serde(rename = "us-gaap:AccruedLiabilitiesCurrent", default)]
+    #[xbrl(concept = "us-gaap:AccruedLiabilitiesCurrent")]
     pub accrued_liabilities_current: Option<f64>,
 
     /// Other current liabilities not elsewhere classified.
-    #[serde(rename = "us-gaap:OtherLiabilitiesCurrent", default)]
+    #[xbrl(concept = "us-gaap:OtherLiabilitiesCurrent")]
     pub other_liabilities_current: Option<f64>,
 
     /// Other liabilities not elsewhere classified (non-current).
-    #[serde(rename = "us-gaap:OtherLiabilities", default)]
+    #[xbrl(concept = "us-gaap:OtherLiabilities")]
     pub other_liabilities: Option<f64>,
 
     /// Notes payable.
-    #[serde(rename = "us-gaap:NotesPayable", default)]
+    #[xbrl(concept = "us-gaap:NotesPayable")]
     pub notes_payable: Option<f64>,
 
     /// Notes payable due within one year.
-    #[serde(rename = "us-gaap:NotesPayableCurrent", default)]
+    #[xbrl(concept = "us-gaap:NotesPayableCurrent")]
     pub notes_payable_current: Option<f64>,
 
     /// Long-term notes payable.
-    #[serde(rename = "us-gaap:LongTermNotesPayable", default)]
+    #[xbrl(concept = "us-gaap:LongTermNotesPayable")]
     pub long_term_notes_payable: Option<f64>,
 
     /// Loans payable.
-    #[serde(rename = "us-gaap:LoansPayable", default)]
+    #[xbrl(concept = "us-gaap:LoansPayable")]
     pub loans_payable: Option<f64>,
 
     /// Short-term borrowings.
-    #[serde(rename = "us-gaap:ShortTermBorrowings", default)]
+    #[xbrl(concept = "us-gaap:ShortTermBorrowings")]
     pub short_term_borrowings: Option<f64>,
 
     /// Unsecured debt.
-    #[serde(rename = "us-gaap:UnsecuredDebt", default)]
+    #[xbrl(concept = "us-gaap:UnsecuredDebt")]
     pub unsecured_debt: Option<f64>,
 
     /// Bank overdrafts.
-    #[serde(rename = "us-gaap:BankOverdrafts", default)]
+    #[xbrl(concept = "us-gaap:BankOverdrafts")]
     pub bank_overdrafts: Option<f64>,
 
     /// Other notes payable due within one year.
-    #[serde(rename = "us-gaap:OtherNotesPayableCurrent", default)]
+    #[xbrl(concept = "us-gaap:OtherNotesPayableCurrent")]
     pub other_notes_payable_current: Option<f64>,
 
     /// Other notes payable (general, not classified by maturity).
-    #[serde(rename = "us-gaap:OtherNotesPayable", default)]
+    #[xbrl(concept = "us-gaap:OtherNotesPayable")]
     pub other_notes_payable: Option<f64>,
 
     /// Interest payable, current and noncurrent.
-    #[serde(rename = "us-gaap:InterestPayableCurrentAndNoncurrent", default)]
+    #[xbrl(concept = "us-gaap:InterestPayableCurrentAndNoncurrent")]
     pub interest_payable_current_and_noncurrent: Option<f64>,
 
     /// Long-term debt.
-    #[serde(rename = "us-gaap:LongTermDebt", default)]
+    #[xbrl(concept = "us-gaap:LongTermDebt")]
     pub long_term_debt: Option<f64>,
 
     /// Deferred compensation liability classified as non-current.
-    #[serde(
-        rename = "us-gaap:DeferredCompensationLiabilityClassifiedNoncurrent",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:DeferredCompensationLiabilityClassifiedNoncurrent")]
     pub deferred_compensation_liability_noncurrent: Option<f64>,
 
     // --- Equity Section ---
     /// Total stockholders' equity.
-    #[serde(rename = "us-gaap:StockholdersEquity", default)]
+    #[xbrl(concept = "us-gaap:StockholdersEquity")]
     pub stockholders_equity: Option<f64>,
 
     /// Par or stated value of common stock issued.
-    #[serde(rename = "us-gaap:CommonStockValue", default)]
+    #[xbrl(concept = "us-gaap:CommonStockValue")]
     pub common_stock_value: Option<f64>,
 
     /// Preferred stock value.
-    #[serde(rename = "us-gaap:PreferredStockValue", default)]
+    #[xbrl(concept = "us-gaap:PreferredStockValue")]
     pub preferred_stock_value: Option<f64>,
 
     /// Preferred stock par value per share.
-    #[serde(rename = "us-gaap:PreferredStockParOrStatedValuePerShare", default)]
+    #[xbrl(concept = "us-gaap:PreferredStockParOrStatedValuePerShare")]
     pub preferred_stock_par_value_per_share: Option<f64>,
 
     /// Number of preferred shares authorized.
-    #[serde(rename = "us-gaap:PreferredStockSharesAuthorized", default)]
+    #[xbrl(concept = "us-gaap:PreferredStockSharesAuthorized")]
     pub preferred_stock_shares_authorized: Option<f64>,
 
     /// Number of preferred shares issued.
-    #[serde(rename = "us-gaap:PreferredStockSharesIssued", default)]
+    #[xbrl(concept = "us-gaap:PreferredStockSharesIssued")]
     pub preferred_stock_shares_issued: Option<f64>,
 
     /// Number of preferred shares outstanding.
-    #[serde(rename = "us-gaap:PreferredStockSharesOutstanding", default)]
+    #[xbrl(concept = "us-gaap:PreferredStockSharesOutstanding")]
     pub preferred_stock_shares_outstanding: Option<f64>,
 
     /// Additional paid-in capital from stock issuances.
-    #[serde(rename = "us-gaap:AdditionalPaidInCapital", default)]
+    #[xbrl(concept = "us-gaap:AdditionalPaidInCapital")]
     pub additional_paid_in_capital: Option<f64>,
 
     /// Retained earnings or accumulated deficit.
-    #[serde(rename = "us-gaap:RetainedEarningsAccumulatedDeficit", default)]
+    #[xbrl(concept = "us-gaap:RetainedEarningsAccumulatedDeficit")]
     pub retained_earnings_accumulated_deficit: Option<f64>,
 
     /// Accumulated other comprehensive income or loss, net of tax.
-    #[serde(
-        rename = "us-gaap:AccumulatedOtherComprehensiveIncomeLossNetOfTax",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:AccumulatedOtherComprehensiveIncomeLossNetOfTax")]
     pub accumulated_other_comprehensive_income_loss: Option<f64>,
 
     /// Total liabilities and stockholders' equity (should equal total assets).
-    #[serde(rename = "us-gaap:LiabilitiesAndStockholdersEquity", default)]
+    #[xbrl(concept = "us-gaap:LiabilitiesAndStockholdersEquity")]
     pub liabilities_and_stockholders_equity: Option<f64>,
 }
 
 /// Represents key data points from the Income Statement.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, FromXbrl)]
+#[serde(default)]
+#[xbrl(duration)]
 pub struct IncomeStatement {
+    /// First day of the period these figures cover.
+    ///
+    /// Set, with `period_end`, on each of [`Financials::income_statements`]. `None` on
+    /// [`Financials::income_statement`], whose fields are each the best the filing
+    /// offers and can come from different periods.
+    #[xbrl(period_start)]
+    pub period_start: Option<String>,
+
+    /// Last day of the period these figures cover.
+    #[xbrl(period_end)]
+    pub period_end: Option<String>,
+
     /// Total revenues recognized during the period.
-    #[serde(rename = "us-gaap:Revenues", default)]
+    #[xbrl(concept = "us-gaap:Revenues")]
     pub revenues: Option<f64>,
 
     /// Operating income or loss.
-    #[serde(rename = "us-gaap:OperatingIncomeLoss", default)]
+    #[xbrl(concept = "us-gaap:OperatingIncomeLoss")]
     pub operating_income_loss: Option<f64>,
 
     /// Total operating expenses incurred during the period.
-    #[serde(rename = "us-gaap:OperatingExpenses", default)]
+    #[xbrl(concept = "us-gaap:OperatingExpenses")]
     pub operating_expenses: Option<f64>,
 
     /// Total operating costs and expenses.
-    #[serde(rename = "us-gaap:OperatingCostsAndExpenses", default)]
+    #[xbrl(concept = "us-gaap:OperatingCostsAndExpenses")]
     pub operating_costs_and_expenses: Option<f64>,
 
     /// General and administrative expenses.
-    #[serde(rename = "us-gaap:GeneralAndAdministrativeExpense", default)]
+    #[xbrl(concept = "us-gaap:GeneralAndAdministrativeExpense")]
     pub general_and_administrative_expense: Option<f64>,
 
     /// Administrative fees expense.
-    #[serde(rename = "us-gaap:AdministrativeFeesExpense", default)]
+    #[xbrl(concept = "us-gaap:AdministrativeFeesExpense")]
     pub administrative_fees_expense: Option<f64>,
 
     /// Professional and contract services expense.
-    #[serde(rename = "us-gaap:ProfessionalAndContractServicesExpense", default)]
+    #[xbrl(concept = "us-gaap:ProfessionalAndContractServicesExpense")]
     pub professional_and_contract_services_expense: Option<f64>,
 
     /// Professional fees.
-    #[serde(rename = "us-gaap:ProfessionalFees", default)]
+    #[xbrl(concept = "us-gaap:ProfessionalFees")]
     pub professional_fees: Option<f64>,
 
     /// Travel and entertainment expense.
-    #[serde(rename = "us-gaap:TravelAndEntertainmentExpense", default)]
+    #[xbrl(concept = "us-gaap:TravelAndEntertainmentExpense")]
     pub travel_and_entertainment_expense: Option<f64>,
 
     /// SPAC sponsor fees.
-    #[serde(rename = "us-gaap:SponsorFees", default)]
+    #[xbrl(concept = "us-gaap:SponsorFees")]
     pub sponsor_fees: Option<f64>,
 
     /// Income tax expense or benefit.
-    #[serde(rename = "us-gaap:IncomeTaxExpenseBenefit", default)]
+    #[xbrl(concept = "us-gaap:IncomeTaxExpenseBenefit")]
     pub income_tax_expense_benefit: Option<f64>,
 
     /// Utilities operating expenses for products and services.
-    #[serde(
-        rename = "us-gaap:UtilitiesOperatingExpenseProductsAndServices",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:UtilitiesOperatingExpenseProductsAndServices")]
     pub utilities_operating_expense: Option<f64>,
 
     /// Non-operating income and expenses.
-    #[serde(rename = "us-gaap:NonoperatingIncomeExpense", default)]
+    #[xbrl(concept = "us-gaap:NonoperatingIncomeExpense")]
     pub nonoperating_income_expense: Option<f64>,
 
     /// Non-operating interest expense.
-    #[serde(rename = "us-gaap:InterestExpenseNonoperating", default)]
+    #[xbrl(concept = "us-gaap:InterestExpenseNonoperating")]
     pub interest_expense_nonoperating: Option<f64>,
 
     /// Interest and other income.
-    #[serde(rename = "us-gaap:InterestAndOtherIncome", default)]
+    #[xbrl(concept = "us-gaap:InterestAndOtherIncome")]
     pub interest_and_other_income: Option<f64>,
 
     /// Other interest income.
-    #[serde(rename = "us-gaap:InterestIncomeOther", default)]
+    #[xbrl(concept = "us-gaap:InterestIncomeOther")]
     pub interest_income_other: Option<f64>,
 
     /// Investment income from interest.
-    #[serde(rename = "us-gaap:InvestmentIncomeInterest", default)]
+    #[xbrl(concept = "us-gaap:InvestmentIncomeInterest")]
     pub investment_income_interest: Option<f64>,
 
     /// Investment income from dividends.
-    #[serde(rename = "us-gaap:InvestmentIncomeDividend", default)]
+    #[xbrl(concept = "us-gaap:InvestmentIncomeDividend")]
     pub investment_income_dividend: Option<f64>,
 
     /// Gain or loss on investments.
-    #[serde(rename = "us-gaap:GainLossOnInvestments", default)]
+    #[xbrl(concept = "us-gaap:GainLossOnInvestments")]
     pub gain_loss_on_investments: Option<f64>,
 
     /// Fair value adjustment of warrants.
-    #[serde(rename = "us-gaap:FairValueAdjustmentOfWarrants", default)]
+    #[xbrl(concept = "us-gaap:FairValueAdjustmentOfWarrants")]
     pub fair_value_adjustment_of_warrants: Option<f64>,
 
     /// Other underwriting expenses.
-    #[serde(rename = "us-gaap:OtherUnderwritingExpense", default)]
+    #[xbrl(concept = "us-gaap:OtherUnderwritingExpense")]
     pub other_underwriting_expense: Option<f64>,
 
     /// Payments for fees.
-    #[serde(rename = "us-gaap:PaymentsForFees", default)]
+    #[xbrl(concept = "us-gaap:PaymentsForFees")]
     pub payments_for_fees: Option<f64>,
 
     /// Net income or loss for the period.
-    #[serde(rename = "us-gaap:NetIncomeLoss", default)]
+    #[xbrl(concept = "us-gaap:NetIncomeLoss")]
     pub net_income_loss: Option<f64>,
 
     /// Profit or loss (alternative name for net income/loss).
-    #[serde(rename = "us-gaap:ProfitLoss", default)]
+    #[xbrl(concept = "us-gaap:ProfitLoss")]
     pub profit_loss: Option<f64>,
 
     /// Net income or loss available to common stockholders (basic).
-    #[serde(
-        rename = "us-gaap:NetIncomeLossAvailableToCommonStockholdersBasic",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:NetIncomeLossAvailableToCommonStockholdersBasic")]
     pub net_income_loss_available_to_common_stockholders_basic: Option<f64>,
 
     /// Net income or loss available to common stockholders (diluted).
-    #[serde(
-        rename = "us-gaap:NetIncomeLossAvailableToCommonStockholdersDiluted",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:NetIncomeLossAvailableToCommonStockholdersDiluted")]
     pub net_income_loss_available_to_common_stockholders_diluted: Option<f64>,
 
     /// Comprehensive income, net of tax.
-    #[serde(rename = "us-gaap:ComprehensiveIncomeNetOfTax", default)]
+    #[xbrl(concept = "us-gaap:ComprehensiveIncomeNetOfTax")]
     pub comprehensive_income_net_of_tax: Option<f64>,
 
     /// Basic earnings per share.
-    #[serde(rename = "us-gaap:EarningsPerShareBasic", default)]
+    #[xbrl(concept = "us-gaap:EarningsPerShareBasic")]
     pub earnings_per_share_basic: Option<f64>,
 
     /// Diluted earnings per share.
-    #[serde(rename = "us-gaap:EarningsPerShareDiluted", default)]
+    #[xbrl(concept = "us-gaap:EarningsPerShareDiluted")]
     pub earnings_per_share_diluted: Option<f64>,
 
     /// Weighted average number of shares outstanding (basic).
-    #[serde(
-        rename = "us-gaap:WeightedAverageNumberOfSharesOutstandingBasic",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:WeightedAverageNumberOfSharesOutstandingBasic")]
     pub weighted_average_shares_outstanding_basic: Option<f64>,
 
     /// Weighted average number of diluted shares outstanding.
-    #[serde(
-        rename = "us-gaap:WeightedAverageNumberOfDilutedSharesOutstanding",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:WeightedAverageNumberOfDilutedSharesOutstanding")]
     pub weighted_average_shares_outstanding_diluted: Option<f64>,
 
     /// Antidilutive securities excluded from computation of earnings per share.
-    #[serde(
-        rename = "us-gaap:AntidilutiveSecuritiesExcludedFromComputationOfEarningsPerShareAmount",
-        default
+    #[xbrl(
+        concept = "us-gaap:AntidilutiveSecuritiesExcludedFromComputationOfEarningsPerShareAmount"
     )]
     pub antidilutive_securities_excluded_from_eps: Option<f64>,
 }
 
 /// Represents key data points from the Statement of Cash Flows.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, FromXbrl)]
+#[serde(default)]
+#[xbrl(duration)]
 pub struct CashFlowStatement {
+    /// First day of the period these figures cover.
+    ///
+    /// Set, with `period_end`, on each of [`Financials::cash_flow_statements`]. `None` on
+    /// [`Financials::cash_flow_statement`], whose fields are each the best the filing
+    /// offers and can come from different periods.
+    #[xbrl(period_start)]
+    pub period_start: Option<String>,
+
+    /// Last day of the period these figures cover.
+    #[xbrl(period_end)]
+    pub period_end: Option<String>,
+
     /// Net cash provided by or used in operating activities.
-    #[serde(rename = "us-gaap:NetCashProvidedByUsedInOperatingActivities", default)]
+    #[xbrl(concept = "us-gaap:NetCashProvidedByUsedInOperatingActivities")]
     pub net_cash_provided_by_operating_activities: Option<f64>,
 
     /// Net cash provided by or used in investing activities.
-    #[serde(rename = "us-gaap:NetCashProvidedByUsedInInvestingActivities", default)]
+    #[xbrl(concept = "us-gaap:NetCashProvidedByUsedInInvestingActivities")]
     pub net_cash_provided_by_investing_activities: Option<f64>,
 
     /// Net cash provided by or used in financing activities.
-    #[serde(rename = "us-gaap:NetCashProvidedByUsedInFinancingActivities", default)]
+    #[xbrl(concept = "us-gaap:NetCashProvidedByUsedInFinancingActivities")]
     pub net_cash_provided_by_financing_activities: Option<f64>,
 
     /// Net increase or decrease in cash and cash equivalents during the period.
-    #[serde(
-        rename = "us-gaap:CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalentsPeriodIncreaseDecreaseExcludingExchangeRateEffect",
-        default
+    #[xbrl(
+        concept = "us-gaap:CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalentsPeriodIncreaseDecreaseExcludingExchangeRateEffect"
     )]
     pub cash_and_cash_equivalents_period_increase_decrease: Option<f64>,
 
     /// Proceeds from initial public offering.
-    #[serde(rename = "us-gaap:ProceedsFromIssuanceInitialPublicOffering", default)]
+    #[xbrl(concept = "us-gaap:ProceedsFromIssuanceInitialPublicOffering")]
     pub proceeds_from_issuance_initial_public_offering: Option<f64>,
 
     /// Proceeds from private placement issuance.
-    #[serde(rename = "us-gaap:ProceedsFromIssuanceOfPrivatePlacement", default)]
+    #[xbrl(concept = "us-gaap:ProceedsFromIssuanceOfPrivatePlacement")]
     pub proceeds_from_issuance_of_private_placement: Option<f64>,
 
     /// Proceeds from notes payable.
-    #[serde(rename = "us-gaap:ProceedsFromNotesPayable", default)]
+    #[xbrl(concept = "us-gaap:ProceedsFromNotesPayable")]
     pub proceeds_from_notes_payable: Option<f64>,
 
     /// Proceeds from related party debt.
-    #[serde(rename = "us-gaap:ProceedsFromRelatedPartyDebt", default)]
+    #[xbrl(concept = "us-gaap:ProceedsFromRelatedPartyDebt")]
     pub proceeds_from_related_party_debt: Option<f64>,
 
     /// Payments to acquire investments.
-    #[serde(rename = "us-gaap:PaymentsToAcquireInvestments", default)]
+    #[xbrl(concept = "us-gaap:PaymentsToAcquireInvestments")]
     pub payments_to_acquire_investments: Option<f64>,
 
     /// Payments of debt issuance costs.
-    #[serde(rename = "us-gaap:PaymentsOfDebtIssuanceCosts", default)]
+    #[xbrl(concept = "us-gaap:PaymentsOfDebtIssuanceCosts")]
     pub payments_of_debt_issuance_costs: Option<f64>,
 
     /// Repayments of related party debt.
-    #[serde(rename = "us-gaap:RepaymentsOfRelatedPartyDebt", default)]
+    #[xbrl(concept = "us-gaap:RepaymentsOfRelatedPartyDebt")]
     pub repayments_of_related_party_debt: Option<f64>,
 
     /// Increase or decrease in accrued liabilities.
-    #[serde(rename = "us-gaap:IncreaseDecreaseInAccruedLiabilities", default)]
+    #[xbrl(concept = "us-gaap:IncreaseDecreaseInAccruedLiabilities")]
     pub increase_decrease_in_accrued_liabilities: Option<f64>,
 
     /// Increase or decrease in prepaid expenses.
-    #[serde(rename = "us-gaap:IncreaseDecreaseInPrepaidExpense", default)]
+    #[xbrl(concept = "us-gaap:IncreaseDecreaseInPrepaidExpense")]
     pub increase_decrease_in_prepaid_expense: Option<f64>,
 
     /// Increase or decrease in accounts payable.
-    #[serde(rename = "us-gaap:IncreaseDecreaseInAccountsPayable", default)]
+    #[xbrl(concept = "us-gaap:IncreaseDecreaseInAccountsPayable")]
     pub increase_decrease_in_accounts_payable: Option<f64>,
 
     /// Increase or decrease in deposits outstanding.
-    #[serde(rename = "us-gaap:IncreaseDecreaseInDepositsOutstanding", default)]
+    #[xbrl(concept = "us-gaap:IncreaseDecreaseInDepositsOutstanding")]
     pub increase_decrease_in_deposits_outstanding: Option<f64>,
 
     /// Increase or decrease in amounts due to affiliates.
-    #[serde(rename = "us-gaap:IncreaseDecreaseInDueToAffiliates", default)]
+    #[xbrl(concept = "us-gaap:IncreaseDecreaseInDueToAffiliates")]
     pub increase_decrease_in_due_to_affiliates: Option<f64>,
 
     /// Period increase/decrease in cash including exchange rate effect.
-    #[serde(
-        rename = "us-gaap:CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalentsPeriodIncreaseDecreaseIncludingExchangeRateEffect",
-        default
+    #[xbrl(
+        concept = "us-gaap:CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalentsPeriodIncreaseDecreaseIncludingExchangeRateEffect"
     )]
     pub cash_period_increase_decrease_including_fx: Option<f64>,
 
     /// Increase/decrease in prepaid, deferred expense, and other assets.
-    #[serde(
-        rename = "us-gaap:IncreaseDecreaseInPrepaidDeferredExpenseAndOtherAssets",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:IncreaseDecreaseInPrepaidDeferredExpenseAndOtherAssets")]
     pub increase_decrease_prepaid_and_other_assets: Option<f64>,
 
     /// Increase/decrease in prepaid insurance.
-    #[serde(rename = "us-gaap:IncreaseDecreaseInPrepaidInsurance", default)]
+    #[xbrl(concept = "us-gaap:IncreaseDecreaseInPrepaidInsurance")]
     pub increase_decrease_prepaid_insurance: Option<f64>,
 
     /// Proceeds from issuance of common stock.
-    #[serde(rename = "us-gaap:ProceedsFromIssuanceOfCommonStock", default)]
+    #[xbrl(concept = "us-gaap:ProceedsFromIssuanceOfCommonStock")]
     pub proceeds_from_issuance_of_common_stock: Option<f64>,
 
     /// Proceeds from issuance of warrants.
-    #[serde(rename = "us-gaap:ProceedsFromIssuanceOfWarrants", default)]
+    #[xbrl(concept = "us-gaap:ProceedsFromIssuanceOfWarrants")]
     pub proceeds_from_issuance_of_warrants: Option<f64>,
 
     /// Payments of stock issuance costs.
-    #[serde(rename = "us-gaap:PaymentsOfStockIssuanceCosts", default)]
+    #[xbrl(concept = "us-gaap:PaymentsOfStockIssuanceCosts")]
     pub payments_of_stock_issuance_costs: Option<f64>,
 
     /// Payments for underwriting expense.
-    #[serde(rename = "us-gaap:PaymentsForUnderwritingExpense", default)]
+    #[xbrl(concept = "us-gaap:PaymentsForUnderwritingExpense")]
     pub payments_for_underwriting_expense: Option<f64>,
 
     /// Repayments of notes payable.
-    #[serde(rename = "us-gaap:RepaymentsOfNotesPayable", default)]
+    #[xbrl(concept = "us-gaap:RepaymentsOfNotesPayable")]
     pub repayments_of_notes_payable: Option<f64>,
 
     /// Payment of financing and stock issuance costs (combined).
-    #[serde(rename = "us-gaap:PaymentOfFinancingAndStockIssuanceCosts", default)]
+    #[xbrl(concept = "us-gaap:PaymentOfFinancingAndStockIssuanceCosts")]
     pub payment_of_financing_and_stock_issuance_costs: Option<f64>,
 
     /// Proceeds from stock options exercised.
-    #[serde(rename = "us-gaap:ProceedsFromStockOptionsExercised", default)]
+    #[xbrl(concept = "us-gaap:ProceedsFromStockOptionsExercised")]
     pub proceeds_from_stock_options_exercised: Option<f64>,
 
     /// Payments for repurchase of common stock.
-    #[serde(rename = "us-gaap:PaymentsForRepurchaseOfCommonStock", default)]
+    #[xbrl(concept = "us-gaap:PaymentsForRepurchaseOfCommonStock")]
     pub payments_for_repurchase_of_common_stock: Option<f64>,
 }
 
 /// Represents detailed information about stock issuances and equity transactions.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, FromXbrl)]
+#[serde(default)]
 pub struct EquityDetails {
     /// Number of common stock shares authorized.
-    #[serde(rename = "us-gaap:CommonStockSharesAuthorized", default)]
+    #[xbrl(concept = "us-gaap:CommonStockSharesAuthorized")]
     pub common_stock_shares_authorized: Option<f64>,
 
     /// Number of common stock shares issued.
-    #[serde(rename = "us-gaap:CommonStockSharesIssued", default)]
+    #[xbrl(concept = "us-gaap:CommonStockSharesIssued")]
     pub common_stock_shares_issued: Option<f64>,
 
     /// Number of common stock shares outstanding.
-    #[serde(rename = "us-gaap:CommonStockSharesOutstanding", default)]
+    #[xbrl(concept = "us-gaap:CommonStockSharesOutstanding")]
     pub common_stock_shares_outstanding: Option<f64>,
 
     /// Par or stated value per common stock share.
-    #[serde(rename = "us-gaap:CommonStockParOrStatedValuePerShare", default)]
+    #[xbrl(concept = "us-gaap:CommonStockParOrStatedValuePerShare")]
     pub common_stock_par_value_per_share: Option<f64>,
 
     /// Voting rights description for common stock.
-    #[serde(rename = "us-gaap:CommonStockVotingRights", default)]
+    #[xbrl(concept = "us-gaap:CommonStockVotingRights")]
     pub common_stock_voting_rights: Option<String>,
 
     /// Total shares outstanding.
-    #[serde(rename = "us-gaap:SharesOutstanding", default)]
+    #[xbrl(concept = "us-gaap:SharesOutstanding")]
     pub shares_outstanding: Option<f64>,
 
     /// Price per share for shares issued.
-    #[serde(rename = "us-gaap:SharesIssuedPricePerShare", default)]
+    #[xbrl(concept = "us-gaap:SharesIssuedPricePerShare")]
     pub shares_issued_price_per_share: Option<f64>,
 
     /// Current share price.
-    #[serde(rename = "us-gaap:SharePrice", default)]
+    #[xbrl(concept = "us-gaap:SharePrice")]
     pub share_price: Option<f64>,
 
     /// Price per share for stock sales.
-    #[serde(rename = "us-gaap:SaleOfStockPricePerShare", default)]
+    #[xbrl(concept = "us-gaap:SaleOfStockPricePerShare")]
     pub sale_of_stock_price_per_share: Option<f64>,
 
     /// Number of shares issued in stock sale transaction.
-    #[serde(
-        rename = "us-gaap:SaleOfStockNumberOfSharesIssuedInTransaction",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:SaleOfStockNumberOfSharesIssuedInTransaction")]
     pub sale_of_stock_number_of_shares_issued: Option<f64>,
 
     /// Consideration received from stock sale transaction.
-    #[serde(
-        rename = "us-gaap:SaleOfStockConsiderationReceivedOnTransaction",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:SaleOfStockConsiderationReceivedOnTransaction")]
     pub sale_of_stock_consideration_received_on_transaction: Option<f64>,
 
     /// Shares issued during period - new issues.
-    #[serde(rename = "us-gaap:StockIssuedDuringPeriodSharesNewIssues", default)]
+    #[xbrl(concept = "us-gaap:StockIssuedDuringPeriodSharesNewIssues")]
     pub stock_issued_during_period_shares_new_issues: Option<f64>,
 
     /// Shares issued during period for share-based compensation.
-    #[serde(
-        rename = "us-gaap:StockIssuedDuringPeriodSharesShareBasedCompensation",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:StockIssuedDuringPeriodSharesShareBasedCompensation")]
     pub stock_issued_during_period_shares_share_based_compensation: Option<f64>,
 
     /// Shares issued during period - conversion of convertible securities.
-    #[serde(
-        rename = "us-gaap:StockIssuedDuringPeriodSharesConversionOfConvertibleSecurities",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:StockIssuedDuringPeriodSharesConversionOfConvertibleSecurities")]
     pub stock_issued_during_period_shares_conversion_of_convertible_securities: Option<f64>,
 
     /// Restricted stock awards issued (gross).
-    #[serde(
-        rename = "us-gaap:StockIssuedDuringPeriodSharesRestrictedStockAwardGross",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:StockIssuedDuringPeriodSharesRestrictedStockAwardGross")]
     pub stock_issued_during_period_shares_restricted_stock_award_gross: Option<f64>,
 
     /// Other shares issued during period.
-    #[serde(rename = "us-gaap:StockIssuedDuringPeriodSharesOther", default)]
+    #[xbrl(concept = "us-gaap:StockIssuedDuringPeriodSharesOther")]
     pub stock_issued_during_period_shares_other: Option<f64>,
 
     /// Value of new stock issues during period.
-    #[serde(rename = "us-gaap:StockIssuedDuringPeriodValueNewIssues", default)]
+    #[xbrl(concept = "us-gaap:StockIssuedDuringPeriodValueNewIssues")]
     pub stock_issued_during_period_value_new_issues: Option<f64>,
 
     /// Value of stock issued during period from conversion of convertible securities.
-    #[serde(
-        rename = "us-gaap:StockIssuedDuringPeriodValueConversionOfConvertibleSecurities",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:StockIssuedDuringPeriodValueConversionOfConvertibleSecurities")]
     pub stock_issued_during_period_value_conversion_of_convertible_securities: Option<f64>,
 
     /// Value of share-based compensation forfeited during period.
-    #[serde(
-        rename = "us-gaap:StockIssuedDuringPeriodValueShareBasedCompensationForfeited",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:StockIssuedDuringPeriodValueShareBasedCompensationForfeited")]
     pub stock_issued_during_period_value_share_based_compensation_forfeited: Option<f64>,
 
     /// Value of other stock issued during period.
-    #[serde(rename = "us-gaap:StockIssuedDuringPeriodValueOther", default)]
+    #[xbrl(concept = "us-gaap:StockIssuedDuringPeriodValueOther")]
     pub stock_issued_during_period_value_other: Option<f64>,
 
     /// General stock issued amount.
-    #[serde(rename = "us-gaap:StockIssued1", default)]
+    #[xbrl(concept = "us-gaap:StockIssued1")]
     pub stock_issued: Option<f64>,
 
     /// Shares issued (alternative field).
-    #[serde(rename = "us-gaap:SharesIssued", default)]
+    #[xbrl(concept = "us-gaap:SharesIssued")]
     pub shares_issued_alt: Option<f64>,
 
     /// Shares issued during period for services.
-    #[serde(
-        rename = "us-gaap:StockIssuedDuringPeriodSharesIssuedForServices",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:StockIssuedDuringPeriodSharesIssuedForServices")]
     pub stock_issued_during_period_shares_issued_for_services: Option<f64>,
 
     /// Shares forfeited during period (share-based compensation).
-    #[serde(
-        rename = "us-gaap:StockIssuedDuringPeriodSharesShareBasedCompensationForfeited",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:StockIssuedDuringPeriodSharesShareBasedCompensationForfeited")]
     pub stock_issued_during_period_shares_share_based_compensation_forfeited: Option<f64>,
 
     /// Value of stock issued during period for services.
-    #[serde(
-        rename = "us-gaap:StockIssuedDuringPeriodValueIssuedForServices",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:StockIssuedDuringPeriodValueIssuedForServices")]
     pub stock_issued_during_period_value_issued_for_services: Option<f64>,
 
     /// Shares redeemed or called during period.
-    #[serde(rename = "us-gaap:StockRedeemedOrCalledDuringPeriodShares", default)]
+    #[xbrl(concept = "us-gaap:StockRedeemedOrCalledDuringPeriodShares")]
     pub stock_redeemed_or_called_during_period_shares: Option<f64>,
 
     /// Shares repurchased and retired during period.
-    #[serde(
-        rename = "us-gaap:StockRepurchasedAndRetiredDuringPeriodShares",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:StockRepurchasedAndRetiredDuringPeriodShares")]
     pub stock_repurchased_and_retired_during_period_shares: Option<f64>,
 
     /// Value of stock repurchased and retired during period.
-    #[serde(
-        rename = "us-gaap:StockRepurchasedAndRetiredDuringPeriodValue",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:StockRepurchasedAndRetiredDuringPeriodValue")]
     pub stock_repurchased_and_retired_during_period_value: Option<f64>,
 
     /// Amount converted in stock conversion.
-    #[serde(rename = "us-gaap:ConversionOfStockAmountConverted1", default)]
+    #[xbrl(concept = "us-gaap:ConversionOfStockAmountConverted1")]
     pub conversion_of_stock_amount_converted: Option<f64>,
 
     /// Adjustments to APIC for warrant issuance.
-    #[serde(
-        rename = "us-gaap:AdjustmentsToAdditionalPaidInCapitalWarrantIssued",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:AdjustmentsToAdditionalPaidInCapitalWarrantIssued")]
     pub adjustments_to_apic_warrant_issued: Option<f64>,
 
     /// Description of stock sale transaction.
-    #[serde(rename = "us-gaap:SaleOfStockDescriptionOfTransaction", default)]
+    #[xbrl(concept = "us-gaap:SaleOfStockDescriptionOfTransaction")]
     pub sale_of_stock_description: Option<String>,
 
     /// Percentage of ownership before stock sale transaction.
-    #[serde(
-        rename = "us-gaap:SaleOfStockPercentageOfOwnershipBeforeTransaction",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:SaleOfStockPercentageOfOwnershipBeforeTransaction")]
     pub sale_of_stock_percentage_ownership_before: Option<f64>,
 
     /// Share price in business acquisition.
-    #[serde(rename = "us-gaap:BusinessAcquisitionSharePrice", default)]
+    #[xbrl(concept = "us-gaap:BusinessAcquisitionSharePrice")]
     pub business_acquisition_share_price: Option<f64>,
 }
 
 /// Represents information about temporary equity and warrants (common in SPACs).
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, FromXbrl)]
+#[serde(default)]
 pub struct TemporaryEquityAndWarrants {
     /// Carrying amount of temporary equity attributable to parent.
-    #[serde(
-        rename = "us-gaap:TemporaryEquityCarryingAmountAttributableToParent",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:TemporaryEquityCarryingAmountAttributableToParent")]
     pub temporary_equity_carrying_amount: Option<f64>,
 
     /// Accretion of temporary equity to redemption value.
-    #[serde(rename = "us-gaap:TemporaryEquityAccretionToRedemptionValue", default)]
+    #[xbrl(concept = "us-gaap:TemporaryEquityAccretionToRedemptionValue")]
     pub temporary_equity_accretion_to_redemption_value: Option<f64>,
 
     /// Adjustment to temporary equity accretion to redemption value.
-    #[serde(
-        rename = "us-gaap:TemporaryEquityAccretionToRedemptionValueAdjustment",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:TemporaryEquityAccretionToRedemptionValueAdjustment")]
     pub temporary_equity_accretion_adjustment: Option<f64>,
 
     /// Number of temporary equity shares issued.
-    #[serde(rename = "us-gaap:TemporaryEquitySharesIssued", default)]
+    #[xbrl(concept = "us-gaap:TemporaryEquitySharesIssued")]
     pub temporary_equity_shares_issued: Option<f64>,
 
     /// Number of temporary equity shares outstanding.
-    #[serde(rename = "us-gaap:TemporaryEquitySharesOutstanding", default)]
+    #[xbrl(concept = "us-gaap:TemporaryEquitySharesOutstanding")]
     pub temporary_equity_shares_outstanding: Option<f64>,
 
     /// Exercise price of warrants or rights.
-    #[serde(
-        rename = "us-gaap:ClassOfWarrantOrRightExercisePriceOfWarrantsOrRights1",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:ClassOfWarrantOrRightExercisePriceOfWarrantsOrRights1")]
     pub warrant_exercise_price: Option<f64>,
 
     /// Number of securities called by warrants or rights.
-    #[serde(
-        rename = "us-gaap:ClassOfWarrantOrRightNumberOfSecuritiesCalledByWarrantsOrRights",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:ClassOfWarrantOrRightNumberOfSecuritiesCalledByWarrantsOrRights")]
     pub warrant_number_of_securities_called: Option<f64>,
 
     /// Terms of outstanding warrants and rights.
-    #[serde(rename = "us-gaap:WarrantsAndRightsOutstandingTerm", default)]
+    #[xbrl(concept = "us-gaap:WarrantsAndRightsOutstandingTerm")]
     pub warrants_and_rights_outstanding_term: Option<String>,
 
     /// Redemption price per share for temporary equity.
-    #[serde(rename = "us-gaap:TemporaryEquityRedemptionPricePerShare", default)]
+    #[xbrl(concept = "us-gaap:TemporaryEquityRedemptionPricePerShare")]
     pub temporary_equity_redemption_price_per_share: Option<f64>,
 
     /// Par or stated value per share for temporary equity.
-    #[serde(rename = "us-gaap:TemporaryEquityParOrStatedValuePerShare", default)]
+    #[xbrl(concept = "us-gaap:TemporaryEquityParOrStatedValuePerShare")]
     pub temporary_equity_par_or_stated_value_per_share: Option<f64>,
 
     /// Redemption price per share for preferred stock.
-    #[serde(rename = "us-gaap:PreferredStockRedemptionPricePerShare", default)]
+    #[xbrl(concept = "us-gaap:PreferredStockRedemptionPricePerShare")]
     pub preferred_stock_redemption_price_per_share: Option<f64>,
 
     /// Value of temporary equity stock issued during period (new issues).
-    #[serde(
-        rename = "us-gaap:TemporaryEquityStockIssuedDuringPeriodValueNewIssues",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:TemporaryEquityStockIssuedDuringPeriodValueNewIssues")]
     pub temporary_equity_stock_issued_value_new_issues: Option<f64>,
 
     /// Number of securities called by each warrant or right.
-    #[serde(
-        rename = "us-gaap:ClassOfWarrantOrRightNumberOfSecuritiesCalledByEachWarrantOrRight",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:ClassOfWarrantOrRightNumberOfSecuritiesCalledByEachWarrantOrRight")]
     pub warrant_securities_per_warrant: Option<f64>,
 
     /// Number of warrants or rights outstanding.
-    #[serde(rename = "us-gaap:ClassOfWarrantOrRightOutstanding", default)]
+    #[xbrl(concept = "us-gaap:ClassOfWarrantOrRightOutstanding")]
     pub warrants_or_rights_outstanding: Option<f64>,
 
     /// Warrants and rights outstanding (alternative).
-    #[serde(rename = "us-gaap:WarrantsAndRightsOutstanding", default)]
+    #[xbrl(concept = "us-gaap:WarrantsAndRightsOutstanding")]
     pub warrants_and_rights_outstanding_count: Option<f64>,
 
     /// Measurement input for warrants and rights outstanding.
-    #[serde(
-        rename = "us-gaap:WarrantsAndRightsOutstandingMeasurementInput",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:WarrantsAndRightsOutstandingMeasurementInput")]
     pub warrants_measurement_input: Option<f64>,
 
     /// Valuation technique for warrants and rights (text).
-    #[serde(
-        rename = "us-gaap:WarrantsAndRightsOutstandingValuationTechniqueExtensibleList",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:WarrantsAndRightsOutstandingValuationTechniqueExtensibleList")]
     pub warrants_valuation_technique: Option<String>,
 
     /// Temporary equity table text block (disclosure).
-    #[serde(rename = "us-gaap:TemporaryEquityTableTextBlock", default)]
+    #[xbrl(concept = "us-gaap:TemporaryEquityTableTextBlock")]
     pub temporary_equity_disclosure: Option<String>,
 }
 
 /// Represents acquisition and business combination information (relevant for SPACs).
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, FromXbrl)]
+#[serde(default)]
 pub struct BusinessCombinations {
     /// Consideration transferred in asset acquisition.
-    #[serde(rename = "us-gaap:AssetAcquisitionConsiderationTransferred", default)]
+    #[xbrl(concept = "us-gaap:AssetAcquisitionConsiderationTransferred")]
     pub asset_acquisition_consideration_transferred: Option<f64>,
 
     /// Percentage of voting interests acquired in business acquisition.
-    #[serde(
-        rename = "us-gaap:BusinessAcquisitionPercentageOfVotingInterestsAcquired",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:BusinessAcquisitionPercentageOfVotingInterestsAcquired")]
     pub business_acquisition_percentage_of_voting_interests: Option<f64>,
 
     /// Percentage of equity interest in step acquisition.
-    #[serde(
-        rename = "us-gaap:BusinessCombinationStepAcquisitionEquityInterestInAcquireePercentage",
-        default
+    #[xbrl(
+        concept = "us-gaap:BusinessCombinationStepAcquisitionEquityInterestInAcquireePercentage"
     )]
     pub step_acquisition_equity_interest_percentage: Option<f64>,
 
     /// Fair value of equity issued in business combination.
-    #[serde(
-        rename = "us-gaap:EquityIssuedInBusinessCombinationFairValueDisclosure",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:EquityIssuedInBusinessCombinationFairValueDisclosure")]
     pub equity_issued_fair_value: Option<f64>,
 
     /// Supplemental deferred purchase price.
-    #[serde(rename = "us-gaap:SupplementalDeferredPurchasePrice", default)]
+    #[xbrl(concept = "us-gaap:SupplementalDeferredPurchasePrice")]
     pub supplemental_deferred_purchase_price: Option<f64>,
 
     /// Segment allocation table for business combination (text block).
-    #[serde(
-        rename = "us-gaap:BusinessCombinationSegmentAllocationTableTextBlock",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:BusinessCombinationSegmentAllocationTableTextBlock")]
     pub business_combination_segment_allocation_table: Option<String>,
 }
 
 /// Represents debt instruments and conversion details.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, FromXbrl)]
+#[serde(default)]
 pub struct DebtDetails {
     /// Face amount of debt instrument.
-    #[serde(rename = "us-gaap:DebtInstrumentFaceAmount", default)]
+    #[xbrl(concept = "us-gaap:DebtInstrumentFaceAmount")]
     pub debt_instrument_face_amount: Option<f64>,
 
     /// Carrying amount of debt instrument.
-    #[serde(rename = "us-gaap:DebtInstrumentCarryingAmount", default)]
+    #[xbrl(concept = "us-gaap:DebtInstrumentCarryingAmount")]
     pub debt_instrument_carrying_amount: Option<f64>,
 
     /// Stated interest rate percentage on debt instrument.
-    #[serde(rename = "us-gaap:DebtInstrumentInterestRateStatedPercentage", default)]
+    #[xbrl(concept = "us-gaap:DebtInstrumentInterestRateStatedPercentage")]
     pub debt_instrument_interest_rate_stated_percentage: Option<f64>,
 
     /// Conversion price of convertible debt instrument.
-    #[serde(rename = "us-gaap:DebtInstrumentConvertibleConversionPrice1", default)]
+    #[xbrl(concept = "us-gaap:DebtInstrumentConvertibleConversionPrice1")]
     pub debt_convertible_conversion_price: Option<f64>,
 
     /// Amount of converted instrument in debt conversion.
-    #[serde(rename = "us-gaap:DebtConversionConvertedInstrumentAmount1", default)]
+    #[xbrl(concept = "us-gaap:DebtConversionConvertedInstrumentAmount1")]
     pub debt_conversion_converted_amount: Option<f64>,
 
     /// Debt issuance costs incurred during noncash or partial noncash transaction.
-    #[serde(
-        rename = "us-gaap:DebtIssuanceCostsIncurredDuringNoncashOrPartialNoncashTransaction",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:DebtIssuanceCostsIncurredDuringNoncashOrPartialNoncashTransaction")]
     pub debt_issuance_costs_incurred_during_noncash_transaction: Option<f64>,
 
     /// Notes issued value.
-    #[serde(rename = "us-gaap:NotesIssued1", default)]
+    #[xbrl(concept = "us-gaap:NotesIssued1")]
     pub notes_issued: Option<f64>,
 
     /// Extensible enumeration for related party notes payable type.
-    #[serde(
-        rename = "us-gaap:NotesPayableCurrentRelatedPartyTypeExtensibleEnumeration",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:NotesPayableCurrentRelatedPartyTypeExtensibleEnumeration")]
     pub notes_payable_related_party_type: Option<String>,
 }
 
 /// Represents cash management and FDIC insurance details.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, FromXbrl)]
+#[serde(default)]
 pub struct CashManagement {
     /// Amount of cash that is FDIC insured.
-    #[serde(rename = "us-gaap:CashFDICInsuredAmount", default)]
+    #[xbrl(concept = "us-gaap:CashFDICInsuredAmount")]
     pub cash_fdic_insured_amount: Option<f64>,
 
     /// Federal Deposit Insurance Corporation premium expense.
-    #[serde(
-        rename = "us-gaap:FederalDepositInsuranceCorporationPremiumExpense",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:FederalDepositInsuranceCorporationPremiumExpense")]
     pub fdic_premium_expense: Option<f64>,
 }
 
 /// Represents commitments and contingencies placeholder.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, FromXbrl)]
+#[serde(default)]
 pub struct CommitmentsAndContingencies {
     /// Commitments and contingencies placeholder value.
-    #[serde(rename = "us-gaap:CommitmentsAndContingencies", default)]
+    #[xbrl(concept = "us-gaap:CommitmentsAndContingencies")]
     pub commitments_and_contingencies: Option<f64>,
 }
 
 /// Represents segment and related party information.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, FromXbrl)]
+#[serde(default)]
 pub struct SegmentAndRelatedParty {
     /// Number of operating segments.
-    #[serde(rename = "us-gaap:NumberOfOperatingSegments", default)]
+    #[xbrl(concept = "us-gaap:NumberOfOperatingSegments")]
     pub number_of_operating_segments: Option<i32>,
 
     /// Number of reportable segments.
-    #[serde(rename = "us-gaap:NumberOfReportableSegments", default)]
+    #[xbrl(concept = "us-gaap:NumberOfReportableSegments")]
     pub number_of_reportable_segments: Option<i32>,
 
     /// Amount of related party transaction.
-    #[serde(
-        rename = "us-gaap:RelatedPartyTransactionAmountsOfTransaction",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:RelatedPartyTransactionAmountsOfTransaction")]
     pub related_party_transaction_amount: Option<f64>,
 
     /// Extensible enumeration for segment reporting CODM title.
-    #[serde(
-        rename = "us-gaap:SegmentReportingCodmIndividualTitleAndPositionOrGroupOrCommitteeNameExtensibleEnumeration",
-        default
+    #[xbrl(
+        concept = "us-gaap:SegmentReportingCodmIndividualTitleAndPositionOrGroupOrCommitteeNameExtensibleEnumeration"
     )]
     pub segment_codm_title: Option<String>,
 }
 
 /// Represents tax-related disclosures.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, FromXbrl)]
+#[serde(default)]
 pub struct TaxDetails {
     /// Unrecognized tax benefits.
-    #[serde(rename = "us-gaap:UnrecognizedTaxBenefits", default)]
+    #[xbrl(concept = "us-gaap:UnrecognizedTaxBenefits")]
     pub unrecognized_tax_benefits: Option<f64>,
 
     /// Accrued interest and penalties on unrecognized tax benefits.
-    #[serde(
-        rename = "us-gaap:UnrecognizedTaxBenefitsIncomeTaxPenaltiesAndInterestAccrued",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:UnrecognizedTaxBenefitsIncomeTaxPenaltiesAndInterestAccrued")]
     pub unrecognized_tax_benefits_penalties_and_interest: Option<f64>,
 }
 
 /// Represents risk concentrations and accounting policies.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, FromXbrl)]
+#[serde(default)]
 pub struct RisksAndPolicies {
     /// Concentration risk related to credit risk.
-    #[serde(rename = "us-gaap:ConcentrationRiskCreditRisk", default)]
+    #[xbrl(concept = "us-gaap:ConcentrationRiskCreditRisk")]
     pub concentration_risk_credit: Option<String>,
 
     /// Use of estimates policy narrative.
-    #[serde(rename = "us-gaap:UseOfEstimates", default)]
+    #[xbrl(concept = "us-gaap:UseOfEstimates")]
     pub use_of_estimates: Option<String>,
 
     /// Dilutive securities disclosure.
-    #[serde(rename = "us-gaap:DilutiveSecurities", default)]
+    #[xbrl(concept = "us-gaap:DilutiveSecurities")]
     pub dilutive_securities: Option<String>,
 }
 
 /// Represents comprehensive income components.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, FromXbrl)]
+#[serde(default)]
 pub struct ComprehensiveIncomeDetails {
     /// Other comprehensive income from unrealized gains/losses on securities.
-    #[serde(
-        rename = "us-gaap:OtherComprehensiveIncomeUnrealizedHoldingGainLossOnSecuritiesArisingDuringPeriodBeforeTax",
-        default
+    #[xbrl(
+        concept = "us-gaap:OtherComprehensiveIncomeUnrealizedHoldingGainLossOnSecuritiesArisingDuringPeriodBeforeTax"
     )]
     pub other_comprehensive_income_unrealized_securities: Option<f64>,
 
     /// Other comprehensive income from foreign currency transactions and translations.
-    #[serde(
-        rename = "us-gaap:OtherComprehensiveIncomeLossForeignCurrencyTransactionAndTranslationReclassificationAdjustmentFromAOCIRealizedUponSaleOrLiquidationBeforeTax",
-        default
+    #[xbrl(
+        concept = "us-gaap:OtherComprehensiveIncomeLossForeignCurrencyTransactionAndTranslationReclassificationAdjustmentFromAOCIRealizedUponSaleOrLiquidationBeforeTax"
     )]
     pub other_comprehensive_income_foreign_currency: Option<f64>,
 
     /// Other comprehensive income reclassification for held-to-maturity transfers.
-    #[serde(
-        rename = "us-gaap:OtherComprehensiveIncomeReclassificationAdjustmentForHeldToMaturityTransferredToAvailableForSaleSecuritiesBeforeTax",
-        default
+    #[xbrl(
+        concept = "us-gaap:OtherComprehensiveIncomeReclassificationAdjustmentForHeldToMaturityTransferredToAvailableForSaleSecuritiesBeforeTax"
     )]
     pub other_comprehensive_income_htm_reclassification: Option<f64>,
 
     /// Adjustments to additional paid-in capital for stock issuance costs.
-    #[serde(
-        rename = "us-gaap:AdjustmentsToAdditionalPaidInCapitalStockIssuedIssuanceCosts",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:AdjustmentsToAdditionalPaidInCapitalStockIssuedIssuanceCosts")]
     pub adjustments_to_paid_in_capital_issuance_costs: Option<f64>,
 }
 
 /// Represents key narrative text blocks for LLM analysis.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+///
+/// A filing's text blocks are its notes in full — tens to hundreds of
+/// kilobytes of text. A caller that stores [`Financials`] and has no use for
+/// them should clear this before it does.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, FromXbrl)]
+#[serde(default)]
 pub struct Narratives {
     /// Description of the nature of the entity's operations.
-    #[serde(rename = "us-gaap:NatureOfOperations", default)]
+    #[xbrl(concept = "us-gaap:NatureOfOperations")]
     pub nature_of_operations: Option<String>,
 
     /// Disclosure text block for commitments and contingencies.
-    #[serde(
-        rename = "us-gaap:CommitmentsAndContingenciesDisclosureTextBlock",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:CommitmentsAndContingenciesDisclosureTextBlock")]
     pub commitments_and_contingencies: Option<String>,
 
     /// Text block describing significant accounting policies.
-    #[serde(rename = "us-gaap:SignificantAccountingPoliciesTextBlock", default)]
+    #[xbrl(concept = "us-gaap:SignificantAccountingPoliciesTextBlock")]
     pub significant_accounting_policies: Option<String>,
 
     /// Text block describing consolidation policy.
-    #[serde(rename = "us-gaap:ConsolidationPolicyTextBlock", default)]
+    #[xbrl(concept = "us-gaap:ConsolidationPolicyTextBlock")]
     pub consolidation_policy: Option<String>,
 
     /// Combined basis of presentation and significant accounting policies text block.
-    #[serde(
-        rename = "us-gaap:BasisOfPresentationAndSignificantAccountingPoliciesTextBlock",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:BasisOfPresentationAndSignificantAccountingPoliciesTextBlock")]
     pub basis_of_presentation_and_significant_accounting_policies: Option<String>,
 
     /// Text block describing subsequent events.
-    #[serde(rename = "us-gaap:SubsequentEventsTextBlock", default)]
+    #[xbrl(concept = "us-gaap:SubsequentEventsTextBlock")]
     pub subsequent_events: Option<String>,
 
     /// Text block describing cash and cash equivalents policy.
-    #[serde(rename = "us-gaap:CashAndCashEquivalentsPolicyTextBlock", default)]
+    #[xbrl(concept = "us-gaap:CashAndCashEquivalentsPolicyTextBlock")]
     pub cash_and_cash_equivalents_policy: Option<String>,
 
     /// Text block describing earnings per share policy.
-    #[serde(rename = "us-gaap:EarningsPerSharePolicyTextBlock", default)]
+    #[xbrl(concept = "us-gaap:EarningsPerSharePolicyTextBlock")]
     pub earnings_per_share_policy: Option<String>,
 
     /// Policy for fair value of financial instruments.
-    #[serde(rename = "us-gaap:FairValueOfFinancialInstrumentsPolicy", default)]
+    #[xbrl(concept = "us-gaap:FairValueOfFinancialInstrumentsPolicy")]
     pub fair_value_of_financial_instruments_policy: Option<String>,
 
     /// Text block describing income tax policy.
-    #[serde(rename = "us-gaap:IncomeTaxPolicyTextBlock", default)]
+    #[xbrl(concept = "us-gaap:IncomeTaxPolicyTextBlock")]
     pub income_tax_policy: Option<String>,
 
     /// Text block describing derivatives policy.
-    #[serde(rename = "us-gaap:DerivativesPolicyTextBlock", default)]
+    #[xbrl(concept = "us-gaap:DerivativesPolicyTextBlock")]
     pub derivatives_policy: Option<String>,
 
     /// Text block describing investment policy.
-    #[serde(rename = "us-gaap:InvestmentPolicyTextBlock", default)]
+    #[xbrl(concept = "us-gaap:InvestmentPolicyTextBlock")]
     pub investment_policy: Option<String>,
 
     /// Text block describing new accounting pronouncements policy.
-    #[serde(
-        rename = "us-gaap:NewAccountingPronouncementsPolicyPolicyTextBlock",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:NewAccountingPronouncementsPolicyPolicyTextBlock")]
     pub new_accounting_pronouncements_policy: Option<String>,
 
     /// Text block disclosing related party transactions.
-    #[serde(
-        rename = "us-gaap:RelatedPartyTransactionsDisclosureTextBlock",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:RelatedPartyTransactionsDisclosureTextBlock")]
     pub related_party_transactions: Option<String>,
 
     /// Text block for stockholders' equity note disclosure.
-    #[serde(rename = "us-gaap:StockholdersEquityNoteDisclosureTextBlock", default)]
+    #[xbrl(concept = "us-gaap:StockholdersEquityNoteDisclosureTextBlock")]
     pub stockholders_equity_note: Option<String>,
 
     /// Text block for fair value assets measured on recurring basis.
-    #[serde(
-        rename = "us-gaap:FairValueAssetsMeasuredOnRecurringBasisTextBlock",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:FairValueAssetsMeasuredOnRecurringBasisTextBlock")]
     pub fair_value_assets_measured_recurring: Option<String>,
 
     /// Basis of accounting policy text block.
-    #[serde(rename = "us-gaap:BasisOfAccountingPolicyPolicyTextBlock", default)]
+    #[xbrl(concept = "us-gaap:BasisOfAccountingPolicyPolicyTextBlock")]
     pub basis_of_accounting_policy: Option<String>,
 
     /// Deferred charges policy text block.
-    #[serde(rename = "us-gaap:DeferredChargesPolicyTextBlock", default)]
+    #[xbrl(concept = "us-gaap:DeferredChargesPolicyTextBlock")]
     pub deferred_charges_policy: Option<String>,
 
     /// Fair value assets and liabilities valuation techniques table text block.
-    #[serde(
-        rename = "us-gaap:FairValueAssetsAndLiabilitiesMeasuredOnRecurringAndNonrecurringBasisValuationTechniquesTableTextBlock",
-        default
+    #[xbrl(
+        concept = "us-gaap:FairValueAssetsAndLiabilitiesMeasuredOnRecurringAndNonrecurringBasisValuationTechniquesTableTextBlock"
     )]
     pub fair_value_valuation_techniques_table: Option<String>,
 
     /// Fair value disclosures text block.
-    #[serde(rename = "us-gaap:FairValueDisclosuresTextBlock", default)]
+    #[xbrl(concept = "us-gaap:FairValueDisclosuresTextBlock")]
     pub fair_value_disclosures: Option<String>,
 
     /// Fair value measurement policy text block.
-    #[serde(rename = "us-gaap:FairValueMeasurementPolicyPolicyTextBlock", default)]
+    #[xbrl(concept = "us-gaap:FairValueMeasurementPolicyPolicyTextBlock")]
     pub fair_value_measurement_policy: Option<String>,
 
     /// Marketable securities policy text block.
-    #[serde(rename = "us-gaap:MarketableSecuritiesPolicy", default)]
+    #[xbrl(concept = "us-gaap:MarketableSecuritiesPolicy")]
     pub marketable_securities_policy: Option<String>,
 
     /// Organization, consolidation, and presentation of financial statements disclosure text block.
-    #[serde(
-        rename = "us-gaap:OrganizationConsolidationAndPresentationOfFinancialStatementsDisclosureTextBlock",
-        default
+    #[xbrl(
+        concept = "us-gaap:OrganizationConsolidationAndPresentationOfFinancialStatementsDisclosureTextBlock"
     )]
     pub organization_consolidation_presentation_disclosure: Option<String>,
 
     /// Reconciliation of assets from segment to consolidated text block.
-    #[serde(
-        rename = "us-gaap:ReconciliationOfAssetsFromSegmentToConsolidatedTextBlock",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:ReconciliationOfAssetsFromSegmentToConsolidatedTextBlock")]
     pub reconciliation_assets_segment_to_consolidated: Option<String>,
 
     /// Schedule of segment reporting information by segment text block.
-    #[serde(
-        rename = "us-gaap:ScheduleOfSegmentReportingInformationBySegmentTextBlock",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:ScheduleOfSegmentReportingInformationBySegmentTextBlock")]
     pub schedule_segment_reporting_information: Option<String>,
 
     /// Description of how CODM profit/loss measure is used.
-    #[serde(
-        rename = "us-gaap:SegmentReportingCodmProfitLossMeasureHowUsedDescription",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:SegmentReportingCodmProfitLossMeasureHowUsedDescription")]
     pub segment_codm_profit_loss_measure_description: Option<String>,
 
     /// Share-based compensation option and incentive plans policy text block.
-    #[serde(
-        rename = "us-gaap:ShareBasedCompensationOptionAndIncentivePlansPolicy",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:ShareBasedCompensationOptionAndIncentivePlansPolicy")]
     pub share_based_compensation_policy: Option<String>,
 
     /// Text block for schedule of earnings per share basic and diluted.
-    #[serde(
-        rename = "us-gaap:ScheduleOfEarningsPerShareBasicAndDilutedTableTextBlock",
-        default
-    )]
+    #[xbrl(concept = "us-gaap:ScheduleOfEarningsPerShareBasicAndDilutedTableTextBlock")]
     pub schedule_of_earnings_per_share: Option<String>,
 
     /// Text block for segment reporting disclosure.
-    #[serde(rename = "us-gaap:SegmentReportingDisclosureTextBlock", default)]
+    #[xbrl(concept = "us-gaap:SegmentReportingDisclosureTextBlock")]
     pub segment_reporting: Option<String>,
 
     /// Text block describing subsidiary of limited liability company or limited partnership.
-    #[serde(
-        rename = "us-gaap:ScheduleOfSubsidiaryOfLimitedLiabilityCompanyOrLimitedPartnershipDescriptionTextBlock",
-        default
+    #[xbrl(
+        concept = "us-gaap:ScheduleOfSubsidiaryOfLimitedLiabilityCompanyOrLimitedPartnershipDescriptionTextBlock"
     )]
     pub subsidiary_description: Option<String>,
 
     /// Text block for shares subject to mandatory redemption policy.
-    #[serde(
-        rename = "us-gaap:SharesSubjectToMandatoryRedemptionChangesInRedemptionValuePolicyTextBlock",
-        default
+    #[xbrl(
+        concept = "us-gaap:SharesSubjectToMandatoryRedemptionChangesInRedemptionValuePolicyTextBlock"
     )]
     pub shares_subject_to_mandatory_redemption_policy: Option<String>,
 }
 
 /// A composite structure holding all extracted US-GAAP financial data.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+///
+/// The three statements appear twice. `balance_sheet`, `income_statement` and
+/// `cash_flow_statement` take, field by field, the fact that best matches the
+/// period the filing reports on — in a 10-Q that is the year to date — and
+/// fall back to a comparative or a dimensional breakdown when that is all the
+/// filing tags. `balance_sheets`, `income_statements` and
+/// `cash_flow_statements` hold one statement per period the filing reports,
+/// each read from that period alone: the quarter beside the year to date, this
+/// year beside last.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, FromXbrl)]
+#[serde(default)]
 pub struct Financials {
     /// Balance sheet information including assets, liabilities, and equity.
+    #[xbrl(nested)]
     pub balance_sheet: BalanceSheet,
 
     /// Income statement information including revenues, expenses, and earnings.
+    #[xbrl(nested)]
     pub income_statement: IncomeStatement,
 
     /// Cash flow statement information.
+    #[xbrl(nested)]
     pub cash_flow_statement: CashFlowStatement,
 
     /// Detailed equity and stock information.
+    #[xbrl(nested)]
     pub equity_details: EquityDetails,
 
     /// Temporary equity and warrant information (SPAC-specific).
+    #[xbrl(nested)]
     pub temporary_equity_and_warrants: TemporaryEquityAndWarrants,
 
     /// Business combination and acquisition information.
+    #[xbrl(nested)]
     pub business_combinations: BusinessCombinations,
 
     /// Comprehensive income details.
+    #[xbrl(nested)]
     pub comprehensive_income_details: ComprehensiveIncomeDetails,
 
     /// Narrative disclosures for LLM analysis.
+    #[xbrl(nested)]
     pub narratives: Narratives,
+
+    /// The balance sheet at each date the filing reports one for, latest first.
+    #[xbrl(each_period)]
+    pub balance_sheets: Vec<BalanceSheet>,
+
+    /// The income statement for each period the filing reports, latest first.
+    /// A 10-Q carries the quarter and the year to date, each with its
+    /// comparative from the year before.
+    #[xbrl(each_period)]
+    pub income_statements: Vec<IncomeStatement>,
+
+    /// The cash flow statement for each period the filing reports, latest first.
+    #[xbrl(each_period)]
+    pub cash_flow_statements: Vec<CashFlowStatement>,
 }
 
 /// Extracts a comprehensive set of financial data from an XBRL document.
 ///
-/// This function uses the high-performance `serde`-based deserializer to map
-/// XBRL concepts directly to the `Financials` struct.
+/// Fails on the first value that does not convert to its field's type; use
+/// [`XbrlDataContext::extract_lenient`] to keep the rest of the struct.
 pub fn extract_financials(context: &XbrlDataContext) -> Result<Financials> {
-    from_data(context)
+    context.extract()
 }

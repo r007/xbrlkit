@@ -99,6 +99,7 @@ use quick_xml::{
     events::{BytesStart, Event},
 };
 use std::borrow::Cow;
+use std::collections::HashMap;
 
 /// Checks if a tag name represents an XBRL root element
 ///
@@ -200,7 +201,7 @@ pub fn extract_xbrl_data(xml_content: &str) -> Result<Xbrl> {
                 let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
                 if is_xbrl_root_element(&tag_name) {
                     // Use the generic event processor, breaking when we find the closing </xbrl> tag.
-                    process_events(&mut reader, &mut xbrl, |event| {
+                    process_events(&mut reader, &mut xbrl, false, |event| {
                         if let Event::End(end_event) = event {
                             let end_tag_name =
                                 String::from_utf8_lossy(end_event.name().as_ref()).to_string();
@@ -270,8 +271,12 @@ pub fn extract_xbrl_data(xml_content: &str) -> Result<Xbrl> {
 /// - This parser prioritizes robustness over strict validation
 /// - Designed specifically for SEC EDGAR iXBRL filings
 /// - Handles both uppercase and lowercase tag variations (e.g., `contextref` and `contextRef`)
-/// - Automatically applies scale attributes to numeric values
-/// - Removes formatting (commas) from numeric strings
+/// - Applies `scale` and `sign` to numeric values, so a loss printed as
+///   `(1,234)` in thousands is the value `-1234000`
+/// - A fact's value is the text of everything inside it, whatever HTML wraps
+///   it, and continues through any `ix:continuation` it points at
+/// - Facts nested inside another fact (every figure in a note that is tagged
+///   as a text block) are extracted alongside it
 pub fn extract_ixbrl_data(html_content: &str) -> Result<Xbrl> {
     let mut reader = Reader::from_str(html_content);
     reader.config_mut().trim_text(true);
@@ -284,221 +289,412 @@ pub fn extract_ixbrl_data(html_content: &str) -> Result<Xbrl> {
     let mut xbrl = Xbrl::default();
 
     // Use the generic event processor. For iXBRL, we process until the end of the file.
-    process_events(&mut reader, &mut xbrl, |event| matches!(event, Event::Eof))?;
+    process_events(&mut reader, &mut xbrl, true, |event| {
+        matches!(event, Event::Eof)
+    })?;
 
     Ok(xbrl)
 }
 
-/// Parses an individual iXBRL fact element, including any nested iXBRL facts.
-///
-/// Extracts XBRL fact data from inline tags such as `<ix:nonfraction>`, `<ix:nonnumeric>`,
-/// and `<ix:fraction>`. These tags contain both attributes (context reference, unit reference, etc.)
-/// and text content (the actual value).
-///
-/// ## Nested Element Handling
-///
-/// Some SEC filings nest `ix:nonnumeric` elements inside each other to share text:
-///
-/// ```xml
-/// <ix:nonnumeric format="ixt:date-monthname-day-year-en" name="dei:DocumentPeriodEndDate">
-///     September 30, <ix:nonnumeric name="dei:DocumentFiscalYearFocus">2025</ix:nonnumeric>
-/// </ix:nonnumeric>
-/// ```
-///
-/// In this case the outer element needs the full concatenated text `"September 30, 2025"`
-/// to apply its format transformation.  The inner element is also extracted as a separate
-/// fact (`DocumentFiscalYearFocus = "2025"`) and returned alongside the outer one.
-///
-/// # Arguments
-///
-/// * `e` - The start tag event containing attributes
-/// * `reader` - Mutable reference to the XML reader for extracting text content
-///
-/// # Returns
-///
-/// * `Result<(Vec<Fact>, bool)>` - Tuple of (all facts: outer + any nested, is_nil flag for outer)
-///
-/// # Value Processing
-///
-/// 1. Collects all text content, including text from nested ix elements
-/// 2. Handles HTML entities (falls back to raw text if unescape fails)
-/// 3. Applies format transformations (e.g., `ixt:date-monthname-day-year-en`)
-/// 4. Applies scale attribute to numeric values
-fn parse_ix_fact(e: &BytesStart, reader: &mut Reader<&[u8]>) -> Result<(Vec<Fact>, bool)> {
-    // Use the unified attribute parser
-    let (mut fact, is_nil, scale) = parse_fact_attributes_common(e, true);
+/// Attributes of a fact element that shape its value without being part of it.
+#[derive(Debug, Default)]
+struct FactAttrs {
+    /// `xsi:nil="true"`: the fact is reported, and has no value.
+    is_nil: bool,
 
-    // Extract local name from full name (set by the common parser from 'name' attribute)
-    if let Some(idx) = fact.full_name.find(':') {
-        fact.local_name = fact.full_name[idx + 1..].to_string();
-    } else {
-        fact.local_name = fact.full_name.clone();
-    }
+    /// iXBRL `scale`: the displayed number is multiplied by ten to this power.
+    scale: Option<i32>,
 
-    // Collect all facts (this element + any nested ix facts found during traversal)
-    let mut all_facts = Vec::new();
+    /// iXBRL `sign="-"`: the displayed number is the absolute value of a
+    /// negative one. Filings print losses as `(1,234)` with the parentheses
+    /// outside the tag, so this attribute is the only place the sign lives.
+    negative: bool,
 
-    if !is_nil {
-        // Determine the closing tag name for this element so we can detect its end.
-        let outer_tag_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+    /// iXBRL `continuedAt`: the value runs on in the `ix:continuation` with this id.
+    continued_at: Option<String>,
 
-        // Collect text from the element body.  When a nested ix:non* element is encountered we:
-        //   a) recurse to extract ITS value (which may also have sub-nesting), collecting all
-        //      of its text for our own concatenated value;
-        //   b) register the nested element as an independent fact in `all_facts`.
-        let (raw_text_value, nested_facts) = collect_ix_text_content(reader, &outer_tag_name)?;
-
-        // Nested facts are pushed first so the outer fact ends up last and has priority
-        // in later deduplication (more specific outer context wins over inner).
-        all_facts.extend(nested_facts);
-
-        // --- TRANSFORMATION LOGIC ---
-        let transformed_value = if let Some(format) = &fact.format {
-            transformations::apply_transformation(&raw_text_value, format)
-                .unwrap_or_else(|_| raw_text_value.clone())
-        } else {
-            raw_text_value
-        };
-
-        // Apply scale attribute if present
-        let final_value = if let Some(s) = scale {
-            if let Ok(num) = transformed_value.parse::<f64>() {
-                (num * 10f64.powi(s)).to_string()
-            } else {
-                transformed_value
-            }
-        } else {
-            transformed_value
-        };
-
-        // Only set a String value when there is actual content. Empty strings
-        // occur when the text is inside a non-ix HTML element (e.g. <span>)
-        // that collect_ix_text_content skips. Leaving the value as the default
-        // XbrlValue::Nil avoids downstream "could not parse '' as bool/f64" errors.
-        if !final_value.trim().is_empty() {
-            fact.value = XbrlValue::String(final_value);
-        }
-    }
-
-    // The outer fact is always the last element so callers that want "the primary fact"
-    // can simply use `facts.last()`.
-    all_facts.push(fact);
-
-    Ok((all_facts, is_nil))
+    /// iXBRL `escape="true"`: the value is a block of markup (a text block),
+    /// whose line structure is worth keeping.
+    escape: bool,
 }
 
-/// Collects the full text content of an iXBRL element, consuming events up to (and
-/// including) its matching end tag.
+/// What a pass over an iXBRL document has to remember until it ends.
 ///
-/// Returns `(concatenated_text, nested_ix_facts)`.  For each nested `ix:non*` element
-/// encountered, its text is appended to the accumulator AND the nested fact is added to
-/// the returned vec so it can be registered independently by the caller.
-fn collect_ix_text_content(
+/// An inline fact's value cannot be settled where its tag closes: it may run on
+/// in `ix:continuation` elements that appear later in the document, sometimes
+/// pages later. Facts are therefore registered as they are met, in document
+/// order, and their values are settled once every continuation has been read.
+#[derive(Default)]
+struct InlineState {
+    /// One entry per inline fact: its index in `Xbrl::facts`, the attributes
+    /// that shape its value, and the text collected between its tags.
+    pending: Vec<(usize, FactAttrs, String)>,
+
+    /// The text of each `ix:continuation` by id, and the id it continues at.
+    continuations: HashMap<String, (String, Option<String>)>,
+}
+
+/// The tags that carry an inline fact.
+fn is_inline_fact_tag(lowercase_tag: &str) -> bool {
+    matches!(
+        lowercase_tag,
+        "ix:nonfraction" | "ix:fraction" | "ix:nonnumeric"
+    )
+}
+
+/// HTML elements that start a new line of text. Their boundaries become line
+/// breaks in the collected text so that words on either side do not fuse.
+fn is_block_tag(lowercase_tag: &str) -> bool {
+    matches!(
+        lowercase_tag,
+        "p" | "div"
+            | "br"
+            | "tr"
+            | "td"
+            | "th"
+            | "li"
+            | "ul"
+            | "ol"
+            | "table"
+            | "h1"
+            | "h2"
+            | "h3"
+            | "h4"
+            | "h5"
+            | "h6"
+            | "hr"
+            | "blockquote"
+    )
+}
+
+/// Resolves the named entities an SEC filing's HTML uses beyond XML's five.
+///
+/// quick-xml only knows the predefined XML entities, and an unresolved one
+/// fails the whole text node — which used to leave the literal `&nbsp;` inside
+/// values. Numeric references (`&#160;`) are handled by quick-xml itself.
+fn resolve_entity(entity: &str) -> Option<&'static str> {
+    if let Some(predefined) = quick_xml::escape::resolve_predefined_entity(entity) {
+        return Some(predefined);
+    }
+    Some(match entity {
+        "nbsp" | "ensp" | "emsp" | "thinsp" => " ",
+        "ndash" => "–",
+        "mdash" => "—",
+        "lsquo" => "‘",
+        "rsquo" => "’",
+        "sbquo" => "‚",
+        "ldquo" => "“",
+        "rdquo" => "”",
+        "bdquo" => "„",
+        "laquo" => "«",
+        "raquo" => "»",
+        "hellip" => "…",
+        "bull" => "•",
+        "middot" => "·",
+        "sect" => "§",
+        "para" => "¶",
+        "copy" => "©",
+        "reg" => "®",
+        "trade" => "™",
+        "deg" => "°",
+        "plusmn" => "±",
+        "times" => "×",
+        "divide" => "÷",
+        "cent" => "¢",
+        "pound" => "£",
+        "euro" => "€",
+        "yen" => "¥",
+        "frac12" => "½",
+        "frac14" => "¼",
+        "frac34" => "¾",
+        "dagger" => "†",
+        "Dagger" => "‡",
+        "shy" | "zwnj" | "zwj" => "",
+        _ => return None,
+    })
+}
+
+/// Decodes a text node, falling back to the raw bytes when it holds an entity
+/// nobody recognises.
+fn decode_text(text: &quick_xml::events::BytesText) -> String {
+    text.unescape_with(resolve_entity)
+        .unwrap_or_else(|_| Cow::Owned(String::from_utf8_lossy(text.as_ref()).into_owned()))
+        .into_owned()
+}
+
+/// Reads one attribute by name, ignoring case.
+fn attribute(e: &BytesStart, lowercase_name: &str) -> Option<String> {
+    e.attributes().flatten().find_map(|attr| {
+        attr.key
+            .as_ref()
+            .eq_ignore_ascii_case(lowercase_name.as_bytes())
+            .then(|| String::from_utf8_lossy(&attr.value).into_owned())
+    })
+}
+
+/// Reads an inline fact (`ix:nonFraction`, `ix:nonNumeric`, `ix:fraction`) and
+/// everything inside it, registering the fact — and any fact nested in it — on
+/// `xbrl`. Returns the fact's index in `inline.pending`.
+///
+/// ## What counts as the value
+///
+/// The value of an inline fact is the text of *all* its descendants, whatever
+/// HTML wraps them. A registrant's name is tagged as
+/// `<ix:nonNumeric ...><b>NEWCOURT ACQUISITION CORP</b></ix:nonNumeric>`, and a
+/// text block wraps whole pages of `<p>` and `<table>`. Only `ix:exclude` is
+/// left out, which is how a filer keeps page headers out of a text block.
+///
+/// ## Nested facts
+///
+/// Facts nest two ways, and both are common:
+///
+/// ```xml
+/// <!-- a value built from another value -->
+/// <ix:nonNumeric format="ixt:date-monthname-day-year-en" name="dei:DocumentPeriodEndDate">
+///     September 30, <ix:nonNumeric name="dei:DocumentFiscalYearFocus">2025</ix:nonNumeric>
+/// </ix:nonNumeric>
+///
+/// <!-- a note, tagged as a text block, holding the figures it discusses -->
+/// <ix:nonNumeric name="us-gaap:StockholdersEquityNoteDisclosureTextBlock" escape="true">
+///     <p>... at an exercise price of $<ix:nonFraction name="us-gaap:ClassOfWarrant...">11.50</ix:nonFraction> ...</p>
+/// </ix:nonNumeric>
+/// ```
+///
+/// Every figure in the notes to the financial statements is of the second
+/// kind. A nested fact is registered before the fact that contains it, and its
+/// text is part of the outer fact's.
+fn read_inline_fact(
+    e: &BytesStart,
+    lowercase_tag: &str,
     reader: &mut Reader<&[u8]>,
-    outer_tag: &str,
-) -> Result<(String, Vec<Fact>)> {
-    let mut text_accumulator = String::new();
-    let mut nested_facts: Vec<Fact> = Vec::new();
+    xbrl: &mut Xbrl,
+    inline: &mut InlineState,
+) -> Result<usize> {
+    let (mut fact, attrs) = parse_fact_attributes_common(e, true);
+    fact.local_name = local_part(&fact.full_name).to_string();
+
+    // The content is consumed even for a nil fact, so that the reader ends up
+    // past the closing tag either way.
+    let text = read_inline_content(reader, lowercase_tag, xbrl, inline)?;
+
+    inline.pending.push((xbrl.facts.len(), attrs, text));
+    xbrl.facts.push(fact);
+    Ok(inline.pending.len() - 1)
+}
+
+/// Collects the text inside an inline element, consuming events up to and
+/// including its end tag. Facts met on the way are registered on `xbrl`.
+fn read_inline_content(
+    reader: &mut Reader<&[u8]>,
+    lowercase_end_tag: &str,
+    xbrl: &mut Xbrl,
+    inline: &mut InlineState,
+) -> Result<String> {
+    let mut text = String::new();
     let mut buf = Vec::new();
-    let outer_tag_lower = outer_tag.to_lowercase();
+    // Elements of the same name opened inside this one. Inline facts recurse,
+    // so this only counts HTML that happens to repeat the tag being closed.
+    let mut same_name_depth = 0usize;
 
     loop {
         buf.clear();
-        let event = reader.read_event_into(&mut buf)?;
+        match reader.read_event_into(&mut buf)? {
+            Event::Text(chunk) => text.push_str(&decode_text(&chunk)),
+            Event::CData(chunk) => text.push_str(&String::from_utf8_lossy(chunk.as_ref())),
+            Event::Start(child) => {
+                let tag = String::from_utf8_lossy(child.name().as_ref()).to_lowercase();
 
-        match event {
-            Event::Text(text) => {
-                let chunk = text
-                    .unescape()
-                    .unwrap_or_else(|_| {
-                        Cow::Owned(String::from_utf8_lossy(text.as_ref()).into_owned())
-                    })
-                    .into_owned();
-                text_accumulator.push_str(&chunk);
-            }
-            Event::Start(nested_e) => {
-                let nested_tag = String::from_utf8_lossy(nested_e.name().as_ref()).to_string();
-                let nested_lower = nested_tag.to_lowercase();
-
-                if matches!(
-                    nested_lower.as_str(),
-                    "ix:nonfraction" | "ix:fraction" | "ix:nonnumeric"
-                ) {
-                    // Recursively collect the nested ix fact.
-                    let (nested_text, deeper_facts) = collect_ix_text_content(reader, &nested_tag)?;
-
-                    // Append nested text to our accumulator (contributes to outer value).
-                    // `trim_text(true)` strips trailing whitespace from each Text event,
-                    // so "September 30, " becomes "September 30," before we see it.
-                    // Re-insert a space separator when neither side already has one.
-                    if !text_accumulator.is_empty()
-                        && !text_accumulator.ends_with(char::is_whitespace)
-                        && !nested_text.is_empty()
-                        && !nested_text.starts_with(char::is_whitespace)
-                    {
-                        text_accumulator.push(' ');
-                    }
-                    text_accumulator.push_str(&nested_text);
-
-                    // Build the nested fact and register it independently.
-                    let (nested_all, _) = build_ix_fact_from_attrs(&nested_e, &nested_text)?;
-                    nested_facts.extend(deeper_facts);
-                    nested_facts.extend(nested_all);
+                if is_inline_fact_tag(&tag) {
+                    let nested = read_inline_fact(&child, &tag, reader, xbrl, inline)?;
+                    text.push_str(&inline.pending[nested].2);
+                } else if tag == "ix:exclude" {
+                    // Its text is not part of the value; a fact inside it is still a fact.
+                    read_inline_content(reader, &tag, xbrl, inline)?;
+                } else if tag == "ix:continuation" {
+                    read_continuation(&child, reader, xbrl, inline)?;
                 } else {
-                    // Non-ix nested element: skip to its end without collecting text,
-                    // since HTML formatting tags (<span>, <b>, etc.) shouldn't contribute.
-                    reader.read_to_end_into(nested_e.name(), &mut Vec::new())?;
+                    if tag == lowercase_end_tag {
+                        same_name_depth += 1;
+                    }
+                    if is_block_tag(&tag) {
+                        text.push('\n');
+                    }
                 }
             }
-            Event::End(end_e) => {
-                let end_tag = String::from_utf8_lossy(end_e.name().as_ref()).to_string();
-                if end_tag.to_lowercase() == outer_tag_lower {
-                    break;
+            Event::End(end) => {
+                let tag = String::from_utf8_lossy(end.name().as_ref()).to_lowercase();
+                if tag == lowercase_end_tag {
+                    if same_name_depth == 0 {
+                        break;
+                    }
+                    same_name_depth -= 1;
+                } else if is_block_tag(&tag) {
+                    text.push('\n');
                 }
-                // Mismatched end tag (malformed HTML) — ignore and continue.
+                // Any other end tag is HTML closing, or malformed HTML: carry on.
             }
             Event::Eof => break,
-            _ => { /* ignore other events */ }
+            _ => { /* comments, processing instructions */ }
         }
     }
 
-    Ok((text_accumulator, nested_facts))
+    Ok(text)
 }
 
-/// Builds a `Fact` (and its value) from an already-parsed `BytesStart` and pre-collected text.
-/// Used when recursing into nested ix elements after text has been gathered by the parent.
-fn build_ix_fact_from_attrs(e: &BytesStart, text: &str) -> Result<(Vec<Fact>, bool)> {
-    let (mut fact, is_nil, scale) = parse_fact_attributes_common(e, true);
-
-    if let Some(idx) = fact.full_name.find(':') {
-        fact.local_name = fact.full_name[idx + 1..].to_string();
-    } else {
-        fact.local_name = fact.full_name.clone();
+/// Reads an `ix:continuation` and files its text under its id.
+fn read_continuation(
+    e: &BytesStart,
+    reader: &mut Reader<&[u8]>,
+    xbrl: &mut Xbrl,
+    inline: &mut InlineState,
+) -> Result<()> {
+    let id = attribute(e, "id");
+    let continued_at = attribute(e, "continuedat");
+    let text = read_inline_content(reader, "ix:continuation", xbrl, inline)?;
+    if let Some(id) = id {
+        inline.continuations.insert(id, (text, continued_at));
     }
+    Ok(())
+}
 
-    if !is_nil {
-        let transformed = if let Some(format) = &fact.format {
-            transformations::apply_transformation(text, format).unwrap_or_else(|_| text.to_string())
-        } else {
-            text.to_string()
-        };
+/// Settles the value of every inline fact once the whole document has been read.
+fn settle_inline_facts(xbrl: &mut Xbrl, inline: InlineState) {
+    // A filing chains a handful of continuations; the limit is only there so a
+    // malformed cycle cannot spin.
+    const MAX_CONTINUATIONS: usize = 4096;
 
-        let final_value = if let Some(s) = scale {
-            if let Ok(num) = transformed.parse::<f64>() {
-                (num * 10f64.powi(s)).to_string()
-            } else {
-                transformed
-            }
-        } else {
-            transformed
-        };
+    let InlineState {
+        pending,
+        continuations,
+    } = inline;
 
-        if !final_value.trim().is_empty() {
-            fact.value = XbrlValue::String(final_value);
+    for (index, attrs, mut text) in pending {
+        if attrs.is_nil {
+            continue;
         }
+
+        let mut next = attrs.continued_at.as_deref();
+        for _ in 0..MAX_CONTINUATIONS {
+            let Some((more, then)) = next.and_then(|id| continuations.get(id)) else {
+                break;
+            };
+            text.push('\n');
+            text.push_str(more);
+            next = then.as_deref();
+        }
+
+        let fact = &mut xbrl.facts[index];
+        fact.value = inline_value(&text, fact.format.as_deref(), &attrs);
+    }
+}
+
+/// Turns the text collected for an inline fact into its value: whitespace
+/// normalised, the `format` transformation applied, then `scale`, then `sign`.
+///
+/// Text that comes to nothing is `Nil` rather than an empty string, so that a
+/// tag with no content does not surface downstream as "could not parse '' as f64".
+fn inline_value(raw: &str, format: Option<&str>, attrs: &FactAttrs) -> XbrlValue {
+    let text = if attrs.escape {
+        normalize_lines(raw)
+    } else {
+        collapse_whitespace(raw)
+    };
+
+    let transformed = match format {
+        // A transformation reads one line of text: "September 30, 2025".
+        Some(format) => {
+            let single_line = collapse_whitespace(&text);
+            transformations::apply_transformation(&single_line, format).unwrap_or(text)
+        }
+        None => text,
+    };
+
+    let scaled = match attrs.scale {
+        Some(scale) => shift_decimal(&transformed, scale).unwrap_or(transformed),
+        None => transformed,
+    };
+
+    let value = if attrs.negative {
+        negate(scaled)
+    } else {
+        scaled
+    };
+
+    if value.trim().is_empty() {
+        XbrlValue::Nil
+    } else {
+        XbrlValue::String(value)
+    }
+}
+
+/// Joins text into one line: every run of whitespace becomes a single space.
+fn collapse_whitespace(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Keeps a block of text as lines: each line collapsed, empty lines dropped.
+fn normalize_lines(text: &str) -> String {
+    text.lines()
+        .map(collapse_whitespace)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Multiplies a decimal number by ten to the power `scale`, by moving its
+/// decimal point. Returns `None` when the text is not a plain decimal number.
+///
+/// Done on the digits rather than through `f64` so that `5.5` at scale `-2`
+/// is `0.055` and not `0.055000000000000004`.
+fn shift_decimal(value: &str, scale: i32) -> Option<String> {
+    let value = value.trim();
+    let (negative, unsigned) = match value.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, value),
+    };
+    let (int, frac) = unsigned.split_once('.').unwrap_or((unsigned, ""));
+    if int.is_empty() && frac.is_empty() {
+        return None;
+    }
+    if !int.bytes().chain(frac.bytes()).all(|b| b.is_ascii_digit()) {
+        return None;
     }
 
-    Ok((vec![fact], is_nil))
+    let mut digits = format!("{int}{frac}");
+    let mut point = int.len() as i64 + i64::from(scale);
+    if point <= 0 {
+        digits.insert_str(0, &"0".repeat((1 - point) as usize));
+        point = 1;
+    }
+    let point = point as usize;
+    if point > digits.len() {
+        digits.push_str(&"0".repeat(point - digits.len()));
+    }
+
+    let (int, frac) = digits.split_at(point);
+    let int = int.trim_start_matches('0');
+    let int = if int.is_empty() { "0" } else { int };
+    let frac = frac.trim_end_matches('0');
+
+    let mut shifted = String::with_capacity(digits.len() + 2);
+    if negative && (int != "0" || !frac.is_empty()) {
+        shifted.push('-');
+    }
+    shifted.push_str(int);
+    if !frac.is_empty() {
+        shifted.push('.');
+        shifted.push_str(frac);
+    }
+    Some(shifted)
+}
+
+/// Applies iXBRL `sign="-"` to a value. Zero stays unsigned.
+fn negate(value: String) -> String {
+    if let Some(positive) = value.strip_prefix('-') {
+        return positive.to_string();
+    }
+    let is_zero = value.parse::<f64>().is_ok_and(|number| number == 0.0);
+    if is_zero { value } else { format!("-{value}") }
 }
 
 /// A generic, unified event processing loop for both XBRL and iXBRL
@@ -529,11 +725,17 @@ fn build_ix_fact_from_attrs(e: &BytesStart, text: &str) -> Result<(Vec<Fact>, bo
 /// # Returns
 ///
 /// * `Result<()>` - Success or parsing error
-fn process_events<F>(reader: &mut Reader<&[u8]>, xbrl: &mut Xbrl, mut should_break: F) -> Result<()>
+fn process_events<F>(
+    reader: &mut Reader<&[u8]>,
+    xbrl: &mut Xbrl,
+    inline_document: bool,
+    mut should_break: F,
+) -> Result<()>
 where
     F: FnMut(&Event) -> bool,
 {
     let mut buf = Vec::new();
+    let mut inline = InlineState::default();
     loop {
         buf.clear();
         let event = reader.read_event_into(&mut buf)?;
@@ -552,25 +754,35 @@ where
                     continue;
                 }
 
-                // If not metadata, check if it's an iXBRL fact tag.
-                if matches!(
-                    lowercase_tag.as_str(),
-                    "ix:nonfraction" | "ix:fraction" | "ix:nonnumeric"
-                ) {
-                    // parse_ix_fact now consumes up to (and including) the closing tag, so the
-                    // main loop does NOT need to handle the End event for this element.
-                    let (facts, _) = parse_ix_fact(&e, reader)?;
-                    xbrl.facts.extend(facts);
+                // If not metadata, check if it's an iXBRL fact tag, or the
+                // continuation of one. Both consume up to and including their
+                // closing tag. Whitespace inside them is part of the value —
+                // it is what separates "September 30," from "2025" — so the
+                // reader stops trimming text for as long as one is open.
+                let is_continuation = lowercase_tag == "ix:continuation";
+                if is_continuation || is_inline_fact_tag(&lowercase_tag) {
+                    reader.config_mut().trim_text(false);
+                    let read = if is_continuation {
+                        read_continuation(&e, reader, xbrl, &mut inline)
+                    } else {
+                        read_inline_fact(&e, &lowercase_tag, reader, xbrl, &mut inline).map(|_| ())
+                    };
+                    reader.config_mut().trim_text(true);
+                    read?;
                     continue;
                 }
 
                 // Check if this looks like an XBRL fact (has namespace prefix, not an HTML tag)
-                // For traditional XML, any tag with a namespace prefix could be a fact
+                // For traditional XML, any tag with a namespace prefix could be a fact.
+                // An HTML document carries its facts in `ix:` tags, so there a
+                // prefixed tag is only a fact when it says which context it
+                // belongs to — `<o:p>` and friends are word-processor residue.
                 let lc_tag = lowercase_tag.as_str();
                 if tag_name.contains(':')
                     && !lc_tag.starts_with("ix:")
                     && !lc_tag.starts_with("link:")
                     && !lc_tag.starts_with("html")
+                    && (!inline_document || attribute(&e, "contextref").is_some())
                 {
                     handle_start_event(reader, xbrl, e, tag_name)?;
                 }
@@ -584,6 +796,7 @@ where
             _ => { /* Ignore other events */ }
         }
     }
+    settle_inline_facts(xbrl, inline);
     Ok(())
 }
 
@@ -598,7 +811,8 @@ fn handle_start_event(
     tag_name: String,
 ) -> Result<()> {
     // Use the unified attribute parser
-    let (mut fact, is_explicitly_nil, _) = parse_fact_attributes_common(&e, false);
+    let (mut fact, attrs) = parse_fact_attributes_common(&e, false);
+    let is_explicitly_nil = attrs.is_nil;
     // For XML, the concept name IS the tag name
     fact.local_name = local_part(&tag_name).to_string();
     fact.full_name = tag_name;
@@ -663,7 +877,7 @@ fn handle_empty_event(xbrl: &mut Xbrl, e: BytesStart, tag_name: String) {
     }
 
     // Use the unified attribute parser
-    let (mut fact, _, _) = parse_fact_attributes_common(&e, false);
+    let (mut fact, _) = parse_fact_attributes_common(&e, false);
     // For XML, the concept name IS the tag name
     fact.local_name = local_part(&tag_name).to_string();
     fact.full_name = tag_name;
@@ -896,21 +1110,18 @@ fn try_handle_metadata_or_link(
 ///
 /// # Returns
 ///
-/// Returns a tuple containing:
-/// 1. **`Fact`** - Partially populated fact with attributes extracted
-/// 2. **`bool`** - `is_nil` flag indicating if the fact is explicitly marked nil
-/// 3. **`Option<i32>`** - Optional scale value (iXBRL only) for numeric transformation
+/// Returns the partially populated [`Fact`] and the [`FactAttrs`] that shape
+/// its value: nil, and for iXBRL `scale`, `sign`, `continuedAt` and `escape`.
 ///
 /// # Example Usage
 ///
 /// ```rust,ignore
 /// // For iXBRL facts
-/// let (fact, is_nil, scale) = parse_fact_attributes_common(&start_tag, true);
+/// let (fact, attrs) = parse_fact_attributes_common(&start_tag, true);
 /// // fact.full_name is set from "name" attribute
-/// // scale is Some(value) if scale attribute exists
 ///
 /// // For traditional XBRL facts
-/// let (mut fact, is_nil, _scale) = parse_fact_attributes_common(&start_tag, false);
+/// let (mut fact, attrs) = parse_fact_attributes_common(&start_tag, false);
 /// fact.full_name = tag_name; // Caller must set the concept name from tag
 /// ```
 ///
@@ -918,12 +1129,11 @@ fn try_handle_metadata_or_link(
 ///
 /// When `xsi:nil="true"` or `nil="true"` is encountered:
 /// - `fact.value` is immediately set to `XbrlValue::Nil`
-/// - The `is_nil` flag is returned as `true`
+/// - `FactAttrs::is_nil` is returned as `true`
 /// - Callers should skip content extraction for nil facts
-fn parse_fact_attributes_common(e: &BytesStart, is_ixbrl: bool) -> (Fact, bool, Option<i32>) {
+fn parse_fact_attributes_common(e: &BytesStart, is_ixbrl: bool) -> (Fact, FactAttrs) {
     let mut fact = Fact::default();
-    let mut is_nil = false;
-    let mut scale = None;
+    let mut attrs = FactAttrs::default();
 
     for attr in e.attributes().flatten() {
         // Convert attribute key to lowercase for case-insensitive matching
@@ -936,30 +1146,29 @@ fn parse_fact_attributes_common(e: &BytesStart, is_ixbrl: bool) -> (Fact, bool, 
             "unitref" => fact.unit_ref = Some(value_str.into_owned()),
             "decimals" => fact.decimals = Some(value_str.into_owned()),
             "id" => fact.id = Some(value_str.into_owned()),
-            "format" if is_ixbrl => fact.format = Some(value_str.into_owned()), // NEW: Capture format
+            "format" if is_ixbrl => fact.format = Some(value_str.into_owned()),
 
             // Format-specific attributes
             "name" if is_ixbrl => fact.full_name = value_str.into_owned(),
-            "scale" if is_ixbrl => {
-                if let Ok(s) = value_str.parse::<i32>() {
-                    scale = Some(s);
-                }
-            }
+            "scale" if is_ixbrl => attrs.scale = value_str.trim().parse::<i32>().ok(),
+            "sign" if is_ixbrl => attrs.negative = value_str.trim() == "-",
+            "continuedat" if is_ixbrl => attrs.continued_at = Some(value_str.into_owned()),
+            "escape" if is_ixbrl => attrs.escape = value_str.trim().eq_ignore_ascii_case("true"),
 
             // Unified nil handling
             "xsi:nil" | "nil" => {
                 if value_str.to_lowercase() == "true" {
                     fact.value = XbrlValue::Nil;
-                    is_nil = true;
+                    attrs.is_nil = true;
                 }
             }
             _ => {
-                // Ignore other attributes like arcrole, format, title, etc.
+                // Ignore other attributes like arcrole, title, etc.
             }
         }
     }
 
-    (fact, is_nil, scale)
+    (fact, attrs)
 }
 
 #[cfg(test)]

@@ -1,0 +1,13 @@
+[package]
+name = "xbrl-derive"
+version = "0.1.0"
+edition = "2024"
+description = "#[derive(FromXbrl)]: binds a struct's fields to XBRL concepts"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = "2"

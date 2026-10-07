@@ -546,21 +546,17 @@ fn test_performance_large_document() {
     );
 }
 
-/// Regression test: ix elements whose text content is wrapped inside a non-ix HTML
-/// element (e.g. `<span>`) should produce `XbrlValue::Nil`, not `XbrlValue::String("")`.
+/// An inline fact's value is the text of everything inside it, whatever HTML
+/// wraps that text; a fact with no text at all is `XbrlValue::Nil`, never
+/// `XbrlValue::String("")`.
 ///
-/// The bug manifested as WARN log messages in production:
+/// The empty-string case surfaced in production as
 ///   "For field 'dei:DocumentAnnualReport': could not parse value '' as bool"
-///   "For field 'us-gaap:PreferredStockValue': could not parse value '' as f64"
-///
-/// Root cause: `collect_ix_text_content` skips non-ix nested HTML elements
-/// (`<span>`, `<b>`, etc.) without collecting their text.  When ALL the text is
-/// inside such an element the accumulator stays empty and the old code stored
-/// `XbrlValue::String("")` rather than keeping the default `XbrlValue::Nil`.
+/// when a fact's text sat inside a `<span>` the parser skipped. Skipping was
+/// the real fault: it also lost every registrant name set in `<b>`.
 #[test]
-fn test_empty_text_from_html_wrapped_value_is_nil() {
-    // Simulate the SEC-filing pattern where the visible value lives inside a
-    // <span> (or similar) that the iXBRL spec says should be skipped:
+fn test_html_wrapped_value_is_read_and_empty_is_nil() {
+    // The SEC-filing pattern where the visible value lives inside a <span>:
     //
     //   <ix:nonnumeric name="dei:DocumentAnnualReport" format="ixt-sec:boolballotbox">
     //     <span>☑</span>
@@ -588,14 +584,13 @@ fn test_empty_text_from_html_wrapped_value_is_nil() {
   </ix:header>
 </head>
 <body>
-  <!-- Case 1: value is inside a <span> — collect_ix_text_content skips it,
-       so the accumulator stays ""; should be Nil not String(""). -->
+  <!-- Case 1: value is inside a <span>; the ballot box is still the value. -->
   <ix:nonNumeric contextRef="c0" format="ixt-sec:boolballotbox"
                  name="dei:DocumentAnnualReport" id="ixv-1">
     <span style="font-weight:bold">&#9746;</span>
   </ix:nonNumeric>
 
-  <!-- Case 2: same bug for a numeric field with value in a <span> -->
+  <!-- Case 2: a numeric field whose <span> is empty has no value -->
   <ix:nonFraction contextRef="c0" unitRef="usd" decimals="0"
                   name="us-gaap:PreferredStockValue" id="ixv-2">
     <span></span>
@@ -613,7 +608,7 @@ fn test_empty_text_from_html_wrapped_value_is_nil() {
 
     let xbrl = extract_ixbrl_data(html).expect("should parse iXBRL without error");
 
-    // Case 1: span-wrapped value → Nil (not String(""))
+    // Case 1: span-wrapped value is read, and its format applied
     let annual_report = xbrl
         .facts
         .iter()
@@ -621,11 +616,11 @@ fn test_empty_text_from_html_wrapped_value_is_nil() {
         .expect("dei:DocumentAnnualReport must be present");
     assert_eq!(
         annual_report.value,
-        XbrlValue::Nil,
-        "dei:DocumentAnnualReport with span-wrapped text should be Nil, not String(\"\")"
+        XbrlValue::String("true".to_string()),
+        "dei:DocumentAnnualReport's span-wrapped ballot box should be read"
     );
 
-    // Case 2: numeric field with span-wrapped value → Nil
+    // Case 2: numeric field with an empty span → Nil
     let preferred = xbrl
         .facts
         .iter()
@@ -634,7 +629,7 @@ fn test_empty_text_from_html_wrapped_value_is_nil() {
     assert_eq!(
         preferred.value,
         XbrlValue::Nil,
-        "us-gaap:PreferredStockValue with span-wrapped text should be Nil, not String(\"\")"
+        "us-gaap:PreferredStockValue with no text should be Nil, not String(\"\")"
     );
 
     // Case 3: explicit xsi:nil → Nil

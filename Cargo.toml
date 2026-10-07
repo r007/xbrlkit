@@ -17,5 +17,10 @@ regex = { workspace = true }
 # Error Handling & Logging
 thiserror = { workspace = true }
 
-# Internal dependencies
-common = { path = "../common", default-features = false }
+# `#[derive(FromXbrl)]`
+xbrl-derive = { path = "derive" }
+
+[dev-dependencies]
+# The taxonomy structs are stored through serde_arrow; a test holds them to it.
+serde_arrow = { workspace = true }
+arrow = { version = "55.2.0", default-features = false }

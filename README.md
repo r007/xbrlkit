@@ -10,6 +10,59 @@ every `SpacSnapshot` on a SPAC's history is built from those figures alone.
 | ------------------------------------------- | -------------------------------------------------------------------- |
 | `extract_xbrl_data()` / `from_xbrl_str()`   | A traditional XBRL XML instance                                      |
 | `extract_ixbrl_data()` / `from_ixbrl_str()` | Inline XBRL in a filing's HTML                                       |
-| `us_gaap::extract_financials()`             | The balance sheet, income statement and cash flows                   |
-| `dei::extract_dei()`                        | Document and Entity Information: CIK, entity name, period            |
-| `XbrlDataContext`                           | A fact's context, with the SEC's value transformations applied (50+) |
+| `XbrlDataContext`                           | The parsed document, indexed: `extract()`, `extract_lenient()`       |
+| `#[derive(FromXbrl)]`                       | A struct from the document, each field bound to its concepts         |
+| `us_gaap::Financials`                       | The balance sheet, income statement and cash flows — per period too  |
+| `dei::DeiInfo`                              | Document and Entity Information: CIK, entity name, period, auditor   |
+
+## Two layers
+
+**The parser** (`parser.rs`) keeps everything the filing tags: every context,
+unit and fact. An inline fact's value is the text of everything inside it,
+whatever HTML wraps it, continued through any `ix:continuation`, with its
+`format` transformation (50+ of the SEC's), `scale` and `sign` applied — a loss
+printed as `(1,234)` in thousands is `-1234000`. Facts nested in another fact
+are facts too, which is every figure in a note tagged as a text block.
+
+**The binding** (`bind.rs`) reads a struct from that table of facts:
+
+```rust
+#[derive(Default, Serialize, Deserialize, FromXbrl)]
+#[xbrl(instant)]
+pub struct BalanceSheet {
+    #[xbrl(period_end)]
+    pub as_of: Option<String>,
+
+    #[xbrl(concept = "us-gaap:Assets")]
+    pub assets: Option<f64>,
+
+    // The first concept the filing reports wins.
+    #[xbrl(concept = "us-gaap:AssetsHeldInTrustNoncurrent", alias = "us-gaap:AssetsHeldInTrust")]
+    pub trust: Option<f64>,
+}
+```
+
+The concept lives in `#[xbrl(..)]` and nowhere else, so the struct's serde
+names are its Rust names: what reaches JSON and Parquet is `assets`, not
+`us-gaap:Assets`. Every field's type is fixed, so `serde_arrow` derives the
+schema from the type alone.
+
+| A field of type                 | Holds                                                  |
+| ------------------------------- | ------------------------------------------------------ |
+| `Option<T>`                     | the value of the one best fact                         |
+| `Option<Fact<T>>`               | that fact with its period, unit and dimensions         |
+| `Vec<Fact<T>>`                  | every period and dimension member the concept has      |
+| a struct, `#[xbrl(nested)]`     | more fields, read the same way                         |
+| `Vec` of one, `#[xbrl(each_period)]` | that struct once per period the filing reports    |
+
+## Which fact
+
+Read on its own, a struct takes each field from the fact that best matches the
+period the filing reports on — in a 10-Q, the year to date — falling back to a
+comparative or a dimensional breakdown when that is all there is. Its fields
+are chosen independently and can come from different periods.
+
+Read through `each_period`, every field comes from one period's consolidated
+contexts, and what the filing does not report for that period is `None`. Use it
+when the period matters: `Financials::income_statements` holds the quarter
+beside the year to date, each with last year's comparative.

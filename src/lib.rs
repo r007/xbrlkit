@@ -24,18 +24,32 @@
 //!
 //! The transformation layer operates transparently during parsing - no configuration needed.
 //! See `transformations` module for details.
+//!
+//! ## Reading facts into structs
+//!
+//! A document is a table of facts — one value per concept, per period, per
+//! dimension member. `#[derive(FromXbrl)]` describes a typed view of it, with
+//! each field bound to its concepts by `#[xbrl(..)]`. The struct's serde names
+//! stay its Rust names, so what reaches JSON and Parquet is `assets`, not
+//! `us-gaap:Assets`. See the [`bind`] module.
 
+// `#[derive(FromXbrl)]` expands to paths under `::xbrl`, which this crate's own
+// taxonomies use too.
+extern crate self as xbrl;
+
+pub mod bind;
 pub mod error;
 pub mod parser;
-pub mod serde_xbrl;
 pub mod structures;
 pub mod taxonomies;
 pub mod transformations;
 
 // Re-export key types for consumers of this crate
+pub use bind::{Dimension, Fact, FromXbrl, Span, XbrlDataContext};
 pub use error::{Result, XbrlError};
-pub use serde_xbrl::XbrlDataContext;
 pub use structures::Xbrl;
+/// Binds a struct's fields to XBRL concepts. See [`bind`].
+pub use xbrl_derive::FromXbrl;
 
 /// Parses a traditional XBRL XML document (fallback method).
 /// Alias for `from_str` for backward compatibility.
