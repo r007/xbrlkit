@@ -232,6 +232,34 @@ struct Candidate<'a> {
     members: usize,
 }
 
+/// How exactly a fact states its value: its `decimals`, with `INF` above every
+/// number and an absent or unreadable one below.
+///
+/// A filing tags a figure wherever it prints it, and the notes print it
+/// rounded: the trust balance is `276,012,327` on the balance sheet
+/// (`decimals="0"`) and "$276.0 million" in a note (`decimals="-5"`), under one
+/// concept and one context. Between two such facts the exact one is the figure.
+///
+/// It says nothing between facts in different contexts: a class with no shares
+/// outstanding is an exact `0`, and that is not a better count of another class.
+fn precision(fact: &RawFact) -> i64 {
+    match fact.decimals.as_deref().map(str::trim) {
+        Some(decimals) if decimals.eq_ignore_ascii_case("INF") => i64::MAX,
+        Some(decimals) => decimals.parse().unwrap_or(i64::MIN),
+        None => i64::MIN,
+    }
+}
+
+impl<'a> Candidate<'a> {
+    /// What two printings of one fact have in common.
+    fn duplicate_key(&self) -> (&'a str, Option<&'a str>) {
+        (
+            self.fact.full_name.as_str(),
+            self.fact.context_ref.as_deref(),
+        )
+    }
+}
+
 /// Counts the dimension members that narrow a context. Zero means
 /// consolidated, entity-wide data — the figure on a financial statement line.
 fn member_count(context: &Context) -> usize {
@@ -432,6 +460,17 @@ impl XbrlDataContext {
                 });
             }
         }
+
+        // One fact per concept and context: of the places a filing prints a
+        // figure, the most exact. Equally exact ones all stay, in order.
+        let mut most_exact: HashMap<(&str, Option<&str>), i64> = HashMap::new();
+        for candidate in &candidates {
+            let exact = most_exact
+                .entry(candidate.duplicate_key())
+                .or_insert(i64::MIN);
+            *exact = (*exact).max(precision(candidate.fact));
+        }
+        candidates.retain(|c| precision(c.fact) == most_exact[&c.duplicate_key()]);
         candidates
     }
 
@@ -953,6 +992,59 @@ mod tests {
         assert_eq!(
             one::<Option<f64>>(&data, None, &["us-gaap:StockholdersEquity"]),
             Some(10.0)
+        );
+    }
+
+    #[test]
+    fn the_exact_figure_beats_its_rounded_restatement() {
+        let stated = |value: &str, decimals: &str| RawFact {
+            decimals: Some(decimals.to_string()),
+            ..fact("us-gaap:AssetsHeldInTrustNoncurrent", "now", value)
+        };
+        // Document order: the balance sheet, then the note that rounds it.
+        let data = q3_document(
+            vec![stated("276012327", "0"), stated("276000000", "-5")],
+            Vec::new(),
+        );
+        let concepts = ["us-gaap:AssetsHeldInTrustNoncurrent"];
+
+        assert_eq!(
+            one::<Option<f64>>(&data, None, &concepts),
+            Some(276012327.0)
+        );
+        assert_eq!(
+            one::<Option<f64>>(&data, Some(Span::instant("2024-09-30")), &concepts),
+            Some(276012327.0)
+        );
+        // And once in a list of every value, not once per printing.
+        assert_eq!(one::<Vec<Fact<f64>>>(&data, None, &concepts).len(), 1);
+    }
+
+    #[test]
+    fn precision_does_not_choose_between_contexts() {
+        let class = |id: &str, member: &str| {
+            with_member(
+                instant(id, "2024-09-30"),
+                "us-gaap:StatementClassOfStockAxis",
+                member,
+            )
+        };
+        let stated = |context: &str, value: &str, decimals: &str| RawFact {
+            decimals: Some(decimals.to_string()),
+            ..fact("us-gaap:CommonStockSharesOutstanding", context, value)
+        };
+        // Class A has none outstanding, stated exactly; class B's count is not
+        // a worse answer for being a whole number of shares.
+        let data = q3_document(
+            vec![stated("a", "0", "INF"), stated("b", "7906250", "0")],
+            vec![
+                class("a", "us-gaap:CommonClassAMember"),
+                class("b", "us-gaap:CommonClassBMember"),
+            ],
+        );
+        assert_eq!(
+            one::<Option<f64>>(&data, None, &["us-gaap:CommonStockSharesOutstanding"]),
+            Some(7906250.0)
         );
     }
 
