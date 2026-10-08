@@ -67,5 +67,8 @@ pub fn from_ixbrl_str(content: &str) -> Result<XbrlDataContext> {
 // Re-export the high-level taxonomy components for easy access
 pub use taxonomies::{
     dei::{DeiInfo, extract_dei},
-    us_gaap::{BalanceSheet, CashFlowStatement, Financials, IncomeStatement, extract_financials},
+    us_gaap::{
+        BalanceSheet, Breakdowns, CashFlowStatement, Financials, IncomeStatement,
+        extract_financials,
+    },
 };

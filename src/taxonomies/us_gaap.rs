@@ -10,7 +10,7 @@
 //! but works with any US-GAAP compliant XBRL document.
 
 use crate::FromXbrl;
-use crate::bind::XbrlDataContext;
+use crate::bind::{Fact, XbrlDataContext};
 use crate::error::Result;
 use serde::{Deserialize, Serialize};
 
@@ -43,6 +43,11 @@ pub struct BalanceSheet {
     /// Non-current assets held in trust.
     #[xbrl(concept = "us-gaap:AssetsHeldInTrustNoncurrent")]
     pub assets_held_in_trust_noncurrent: Option<f64>,
+
+    /// Assets held in trust classified as current — where the trust sits on
+    /// the balance sheet of a SPAC inside a year of its deadline.
+    #[xbrl(concept = "us-gaap:AssetsHeldInTrustCurrent")]
+    pub assets_held_in_trust_current: Option<f64>,
 
     /// Cash (not including cash equivalents).
     #[xbrl(concept = "us-gaap:Cash")]
@@ -1022,6 +1027,64 @@ pub struct Narratives {
     pub shares_subject_to_mandatory_redemption_policy: Option<String>,
 }
 
+/// Figures a filing reports once per share class, warrant class or valuation
+/// level rather than once for the entity — each with the date it is as of and
+/// the dimension members it is reported for.
+///
+/// A SPAC tags its redeemable shares against `us-gaap:StatementClassOfStockAxis`
+/// and its warrants against `us-gaap:ClassOfWarrantOrRightAxis`, and often tags
+/// no entity-wide figure at all: of 160 periodic reports sampled in October
+/// 2026, the redeemable share count was reported only per class in 75 of the 99
+/// that tagged it, and warrants outstanding only per class in 42 of 64. The
+/// single-valued fields of [`TemporaryEquityAndWarrants`] then hold whichever
+/// member the filing happened to tag last. These hold all of them, for every
+/// date the filing reports, so a reader can ask for one date and one class.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, FromXbrl)]
+#[serde(default)]
+pub struct Breakdowns {
+    /// The trust account on the balance sheet, at each date and valuation level.
+    #[xbrl(concept = "us-gaap:AssetsHeldInTrustNoncurrent")]
+    pub assets_held_in_trust_noncurrent: Vec<Fact<f64>>,
+
+    /// `us-gaap:AssetsHeldInTrust` wherever it is tagged — the balance sheet for
+    /// some filers, the amount deposited at the IPO in a note for others.
+    #[xbrl(concept = "us-gaap:AssetsHeldInTrust")]
+    pub assets_held_in_trust: Vec<Fact<f64>>,
+
+    /// Redeemable shares outstanding, per class and date.
+    #[xbrl(concept = "us-gaap:TemporaryEquitySharesOutstanding")]
+    pub temporary_equity_shares_outstanding: Vec<Fact<f64>>,
+
+    /// Redeemable shares issued, per class and date.
+    #[xbrl(concept = "us-gaap:TemporaryEquitySharesIssued")]
+    pub temporary_equity_shares_issued: Vec<Fact<f64>>,
+
+    /// Redemption price per redeemable share, per class and date.
+    #[xbrl(concept = "us-gaap:TemporaryEquityRedemptionPricePerShare")]
+    pub temporary_equity_redemption_price_per_share: Vec<Fact<f64>>,
+
+    /// Carrying amount of the redeemable shares, per class and date.
+    #[xbrl(concept = "us-gaap:TemporaryEquityCarryingAmountAttributableToParent")]
+    pub temporary_equity_carrying_amount: Vec<Fact<f64>>,
+
+    /// Warrants outstanding, per warrant class and date.
+    #[xbrl(concept = "us-gaap:ClassOfWarrantOrRightOutstanding")]
+    pub warrants_outstanding: Vec<Fact<f64>>,
+
+    /// Common shares outstanding at the balance sheet date, per class.
+    #[xbrl(concept = "us-gaap:CommonStockSharesOutstanding")]
+    pub common_stock_shares_outstanding: Vec<Fact<f64>>,
+
+    /// Borrowings from related parties, per lender and period — the sponsor's
+    /// loans, which a filing often reports under the sponsor's member only.
+    #[xbrl(concept = "us-gaap:ProceedsFromRelatedPartyDebt")]
+    pub proceeds_from_related_party_debt: Vec<Fact<f64>>,
+
+    /// Repayments to related parties, per lender and period.
+    #[xbrl(concept = "us-gaap:RepaymentsOfRelatedPartyDebt")]
+    pub repayments_of_related_party_debt: Vec<Fact<f64>>,
+}
+
 /// A composite structure holding all extracted US-GAAP financial data.
 ///
 /// The three statements appear twice. `balance_sheet`, `income_statement` and
@@ -1080,6 +1143,11 @@ pub struct Financials {
     /// The cash flow statement for each period the filing reports, latest first.
     #[xbrl(each_period)]
     pub cash_flow_statements: Vec<CashFlowStatement>,
+
+    /// The trust, the redeemable shares and the warrants for every date and
+    /// class the filing reports them for.
+    #[xbrl(nested)]
+    pub breakdowns: Breakdowns,
 }
 
 /// Extracts a comprehensive set of financial data from an XBRL document.

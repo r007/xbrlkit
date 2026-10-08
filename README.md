@@ -66,3 +66,11 @@ Read through `each_period`, every field comes from one period's consolidated
 contexts, and what the filing does not report for that period is `None`. Use it
 when the period matters: `Financials::income_statements` holds the quarter
 beside the year to date, each with last year's comparative.
+
+Neither view holds a figure the filing reports only per class. A SPAC tags its
+redeemable shares per share class and its warrants per warrant class, and
+often tags no figure for the entity: the single-valued field then holds
+whichever member came last. `Financials::breakdowns` keeps those concepts as
+`Vec<Fact<f64>>` — the trust, the redeemable shares and their redemption
+price, the warrants, the common shares, the related-party borrowings — every
+date and member, for a reader that asks for one date and one class.

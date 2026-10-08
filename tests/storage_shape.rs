@@ -217,3 +217,65 @@ fn shares_outstanding_are_reported_per_class() {
         "us-gaap:StatementClassOfStockAxis"
     );
 }
+
+#[test]
+fn redeemable_shares_keep_their_class_and_date() {
+    let financials: Financials = q3().extract().unwrap();
+    let shares: Vec<(&str, f64, usize)> = financials
+        .breakdowns
+        .temporary_equity_shares_outstanding
+        .iter()
+        .map(|fact| {
+            (
+                fact.period_end.as_deref().unwrap(),
+                fact.value,
+                fact.dimensions.len(),
+            )
+        })
+        .collect();
+
+    // Tagged per class on both balance sheet dates, and once for the entity
+    // on the day of the redemption a note describes.
+    assert_eq!(
+        shares,
+        vec![
+            ("2023-09-30", 1113021.0, 1),
+            ("2023-07-11", 1113021.0, 0),
+            ("2023-01-06", 1113021.0, 1),
+            ("2022-12-31", 25000000.0, 1),
+        ]
+    );
+}
+
+#[test]
+fn warrants_are_reported_in_total_and_per_class() {
+    let financials: Financials = q3().extract().unwrap();
+    let at_quarter_end: Vec<(Option<&str>, f64)> = financials
+        .breakdowns
+        .warrants_outstanding
+        .iter()
+        .filter(|fact| fact.period_end.as_deref() == Some("2023-09-30"))
+        .map(|fact| {
+            (
+                fact.dimensions.first().map(|d| d.member.as_str()),
+                fact.value,
+            )
+        })
+        .collect();
+
+    assert_eq!(
+        at_quarter_end,
+        vec![
+            (None, 13070000.0),
+            (Some("ncacu:PublicWarrantsMember"), 12500000.0),
+            (Some("ncacu:PrivateWarrantsMember"), 570000.0),
+        ]
+    );
+}
+
+#[test]
+fn a_row_written_before_the_breakdowns_existed_still_reads() {
+    let old: Financials =
+        serde_json::from_str(r#"{"balance_sheets": [{"as_of": "2023-09-30"}]}"#).unwrap();
+    assert!(old.breakdowns.warrants_outstanding.is_empty());
+}
