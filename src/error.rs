@@ -1,133 +1,77 @@
-//! # XBRL Parser Error Types
-//!
-//! Comprehensive error handling for XBRL parsing operations, providing detailed
-//! error information for debugging and monitoring in production environments.
+//! Error types.
 
-use serde::de;
-use std::fmt::Display;
+use std::error::Error as StdError;
 use thiserror::Error;
 
-/// Comprehensive error types for XBRL parsing and processing operations
+/// What can go wrong reading a document, or a struct from one.
 ///
-/// This enum covers all possible error conditions that can occur during XBRL
-/// document processing, from low-level XML parsing to high-level semantic validation.
-/// Each variant provides specific context to aid in debugging and error recovery.
+/// The parser is lenient by design: real filings carry malformed HTML,
+/// unknown entities and unclosed tags, and it steps over all of those. An
+/// error here means the document could not be read at all.
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum XbrlError {
-    /// XML parsing errors from the underlying quick-xml parser
-    ///
-    /// These errors occur during the initial XML document parsing phase,
-    /// typically due to malformed XML structure, encoding issues, or
-    /// unexpected XML constructs.
-    #[error("XBRL parsing failed: {0}")]
-    ParsingError(#[from] quick_xml::Error),
+    /// The markup is broken at a point the parser cannot step over.
+    #[error("malformed document: {0}")]
+    Malformed(#[source] Box<dyn StdError + Send + Sync + 'static>),
 
-    /// XML attribute parsing errors
-    ///
-    /// Occurs when XML attributes cannot be properly decoded or parsed,
-    /// often due to encoding issues or malformed attribute values.
-    #[error("Attribute parsing failed: {0}")]
-    AttributeError(#[from] quick_xml::events::attributes::AttrError),
+    /// The document is well-formed, but it is not XBRL: an XML document with
+    /// no `<xbrl>` root, say.
+    #[error("not an XBRL document: {0}")]
+    NotXbrl(String),
 
-    /// I/O errors during document processing
+    /// A fact's value does not convert to the type of the field bound to it:
+    /// a filer tagging `N/A` under a numeric concept.
     ///
-    /// These errors occur when reading XBRL documents from files, network
-    /// streams, or other I/O sources.
-    #[error("IO error during parsing: {0}")]
-    IoError(#[from] std::io::Error),
-
-    /// Type conversion errors for XBRL fact values
-    ///
-    /// Occurs when attempting to convert XBRL fact values to specific
-    /// Rust types (e.g., parsing "123.45" as f64 or "true" as bool).
-    #[error("For field '{field_name}': could not parse value '{value}' as {target_type}")]
+    /// [`Document::extract`](crate::Document::extract) fails on the first of
+    /// these; [`Document::extract_lenient`](crate::Document::extract_lenient)
+    /// leaves the field empty and returns them alongside the struct.
+    #[error("field `{field}` ({concept}): cannot read {value:?} as {target_type}")]
     ValueConversion {
-        /// The name of the struct field being deserialized.
-        field_name: String,
-        /// The raw value that failed conversion
+        /// The struct field being filled.
+        field: String,
+        /// The concept the value was tagged with, e.g. `us-gaap:Assets`.
+        concept: String,
+        /// The value as the filing gives it, cut to 80 characters.
         value: String,
-        /// The target type we attempted to convert to
-        target_type: String,
+        /// The Rust type of the field.
+        target_type: &'static str,
     },
-
-    /// Missing required XBRL facts
-    ///
-    /// Indicates that a required financial fact or concept was not found
-    /// in any valid context within the XBRL document.
-    #[error("Required fact '{0}' not found in any context")]
-    MissingFact(String),
-
-    /// Context reference resolution errors
-    ///
-    /// Occurs when an XBRL fact references a context that doesn't exist
-    /// in the document's context definitions.
-    #[error("Context with id '{0}' not found")]
-    ContextNotFound(String),
-
-    /// Unit reference resolution errors
-    ///
-    /// Occurs when an XBRL fact references a unit definition that doesn't
-    /// exist in the document's unit definitions.
-    #[error("Unit with id '{0}' not found")]
-    UnitNotFound(String),
-
-    /// Serde deserialization errors
-    ///
-    /// Custom errors that occur during the serde-based deserialization
-    /// process when mapping XBRL concepts to Rust structs.
-    #[error("Custom deserialization error: {0}")]
-    DeserializationError(String),
-
-    /// XBRL document structure errors
-    ///
-    /// Errors that occur when the XBRL document structure is invalid
-    /// or doesn't conform to expected format.
-    #[error("XBRL document structure error: {0}")]
-    DocumentStructureError(String),
-
-    /// Generic unsupported operation errors
-    ///
-    /// Used for XBRL features or constructs that are not yet supported
-    /// by the parser implementation.
-    #[error("Unsupported XBRL feature: {0}")]
-    Unsupported(String),
 }
 
-/// Result type alias for XBRL operations
-///
-/// Provides a convenient shorthand for `Result<T, XbrlError>` used
-/// throughout the XBRL parsing codebase.
-pub type Result<T> = std::result::Result<T, XbrlError>;
-
-/// Implementation of serde's Error trait for custom deserialization
-///
-/// This allows XbrlError to be used as a serde deserialization error,
-/// enabling seamless integration with the serde-based XBRL concept mapping.
-impl de::Error for XbrlError {
-    fn custom<T: Display>(msg: T) -> Self {
-        XbrlError::DeserializationError(msg.to_string())
+impl XbrlError {
+    /// Wraps an error from the XML reader, keeping it as the source without
+    /// making the reader's types part of this crate's API.
+    pub(crate) fn malformed(source: impl Into<Box<dyn StdError + Send + Sync + 'static>>) -> Self {
+        XbrlError::Malformed(source.into())
     }
 }
+
+/// `Result<T, XbrlError>`.
+pub type Result<T> = std::result::Result<T, XbrlError>;
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_error_display() {
+    fn a_conversion_error_names_the_field_the_concept_and_the_value() {
         let err = XbrlError::ValueConversion {
-            field_name: "amount".to_string(),
-            value: "invalid_number".to_string(),
-            target_type: "f64".to_string(),
+            field: "assets".to_string(),
+            concept: "us-gaap:Assets".to_string(),
+            value: "N/A".to_string(),
+            target_type: "f64",
         };
-
-        assert!(err.to_string().contains("invalid_number"));
-        assert!(err.to_string().contains("f64"));
+        assert_eq!(
+            err.to_string(),
+            "field `assets` (us-gaap:Assets): cannot read \"N/A\" as f64"
+        );
     }
 
     #[test]
-    fn test_serde_error_trait() {
-        let _err: XbrlError = de::Error::custom("test error");
-        // Should compile without issues
+    fn a_malformed_document_keeps_its_cause() {
+        let err = XbrlError::malformed("unexpected end of input");
+        assert!(err.source().is_some());
+        assert!(err.to_string().contains("unexpected end of input"));
     }
 }

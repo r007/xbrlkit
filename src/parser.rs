@@ -54,21 +54,21 @@
 //!            │                                     │
 //!            ▼                                     ▼
 //!   ┌─────────────────────┐           ┌─────────────────────┐
-//!   │ extract_ixbrl_data  │           │ extract_xbrl_data   │
+//!   │ parse_ixbrl  │           │ parse_xml   │
 //!   │  (HTML-aware)       │           │   (XML-only)        │
 //!   └─────────────────────┘           └─────────────────────┘
 //!            │                                     │
 //!            └──────────────┬──────────────────────┘
 //!                           ▼
 //!                  ┌─────────────────┐
-//!                  │  Xbrl Structure │  <- Unified representation
+//!                  │  Instance Structure │  <- Unified representation
 //!                  │ (contexts, units│
 //!                  │     facts)      │
 //!                  └─────────────────┘
 //!                           │
 //!                           ▼
 //!                  ┌─────────────────┐
-//!                  │ XbrlDataContext │  <- Queryable interface
+//!                  │ Document │  <- Queryable interface
 //!                  │  (serde_xbrl)   │
 //!                  └─────────────────┘
 //! ```
@@ -76,23 +76,23 @@
 //! ## Usage Example
 //!
 //! ```rust,no_run
-//! use xbrl::parser::{extract_ixbrl_data, extract_xbrl_data};
+//! use xbrlkit::parser::{parse_ixbrl, parse_xml};
 //!
 //! // Primary approach: Try iXBRL first
 //! let content = std::fs::read_to_string("filing.html").unwrap();
-//! let xbrl = extract_ixbrl_data(&content)
+//! let xbrl = parse_ixbrl(&content)
 //!     .or_else(|_| {
 //!         // Fallback: Try traditional XBRL XML
-//!         extract_xbrl_data(&content)
+//!         parse_xml(&content)
 //!     })
 //!     .expect("Failed to parse either iXBRL or XBRL");
 //!
 //! println!("Parsed {} facts", xbrl.facts.len());
 //! ```
 
-use super::error::{Result, XbrlError};
-use super::structures::{Fact, Xbrl, XbrlValue};
-use super::transformations;
+use crate::error::{Result, XbrlError};
+use crate::instance::{Instance, RawFact, XbrlValue};
+use crate::transformations;
 use quick_xml::{
     Reader, Writer,
     de::from_str,
@@ -116,6 +116,31 @@ use std::collections::HashMap;
 fn is_xbrl_root_element(tag_name: &str) -> bool {
     // Accept various namespace prefixes for the XBRL root element
     tag_name == "xbrl" || tag_name.ends_with(":xbrl")
+}
+
+/// Whether a document is a traditional XBRL instance rather than inline
+/// XBRL, judged by its root element: `<xbrl>` under any prefix, against the
+/// `<html>` of an inline document.
+///
+/// Only the start of the document is read — the XML declaration, comments
+/// and the doctype are stepped over to reach the first element.
+pub fn is_xml_instance(content: &str) -> bool {
+    let mut rest = content;
+    loop {
+        let Some(open) = rest.find('<') else {
+            return false;
+        };
+        rest = &rest[open + 1..];
+        if let Some(comment) = rest.strip_prefix("!--") {
+            rest = comment.find("-->").map_or("", |end| &comment[end + 3..]);
+        } else if !rest.starts_with(['?', '!']) {
+            break;
+        }
+    }
+    let name_end = rest
+        .find(|c: char| c.is_whitespace() || c == '>' || c == '/')
+        .unwrap_or(rest.len());
+    local_part(&rest[..name_end]).eq_ignore_ascii_case("xbrl")
 }
 
 /// Returns the local part of a (possibly) namespace-qualified tag name.
@@ -151,7 +176,7 @@ fn has_id_attribute(e: &BytesStart) -> bool {
 ///
 /// # Returns
 ///
-/// * `Result<Xbrl>` - Parsed XBRL structure or parsing error
+/// * `Result<Instance>` - Parsed XBRL structure or parsing error
 ///
 /// # Errors
 ///
@@ -163,7 +188,7 @@ fn has_id_attribute(e: &BytesStart) -> bool {
 /// # Example
 ///
 /// ```rust
-/// use xbrl::parser::extract_xbrl_data;
+/// use xbrlkit::parser::parse_xml;
 ///
 /// let content = r#"
 /// <?xml version="1.0" encoding="utf-8"?>
@@ -179,12 +204,12 @@ fn has_id_attribute(e: &BytesStart) -> bool {
 /// </xbrl>
 /// "#;
 ///
-/// let xbrl_data = extract_xbrl_data(content).unwrap();
+/// let xbrl_data = parse_xml(content).unwrap();
 /// println!("Extracted {} facts from {} contexts",
 ///          xbrl_data.facts.len(),
 ///          xbrl_data.contexts.len());
 /// ```
-pub fn extract_xbrl_data(xml_content: &str) -> Result<Xbrl> {
+pub fn parse_xml(xml_content: &str) -> Result<Instance> {
     let mut reader = Reader::from_str(xml_content);
 
     // Configure parser for optimal performance
@@ -192,11 +217,14 @@ pub fn extract_xbrl_data(xml_content: &str) -> Result<Xbrl> {
     reader.config_mut().expand_empty_elements = false;
 
     let mut buf = Vec::new();
-    let mut xbrl = Xbrl::default();
+    let mut xbrl = Instance::default();
 
     // Find the root XBRL element
     loop {
-        match reader.read_event_into(&mut buf)? {
+        match reader
+            .read_event_into(&mut buf)
+            .map_err(XbrlError::malformed)?
+        {
             Event::Start(e) => {
                 let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
                 if is_xbrl_root_element(&tag_name) {
@@ -213,8 +241,8 @@ pub fn extract_xbrl_data(xml_content: &str) -> Result<Xbrl> {
                 }
             }
             Event::Eof => {
-                return Err(XbrlError::DeserializationError(
-                    "Could not find root XBRL tag (<xbrl> or <xbrli:xbrl>) in document".to_string(),
+                return Err(XbrlError::NotXbrl(
+                    "no <xbrl> root element in the document".to_string(),
                 ));
             }
             _ => {
@@ -244,7 +272,7 @@ pub fn extract_xbrl_data(xml_content: &str) -> Result<Xbrl> {
 ///
 /// # Returns
 ///
-/// * `Result<Xbrl>` - Parsed XBRL structure with facts, contexts, and units
+/// * `Result<Instance>` - Parsed XBRL structure with facts, contexts, and units
 ///
 /// # Errors
 ///
@@ -257,10 +285,10 @@ pub fn extract_xbrl_data(xml_content: &str) -> Result<Xbrl> {
 /// # Example
 ///
 /// ```rust,no_run
-/// use xbrl::parser::extract_ixbrl_data;
+/// use xbrlkit::parser::parse_ixbrl;
 ///
 /// let html = std::fs::read_to_string("10-q.html").unwrap();
-/// let xbrl_data = extract_ixbrl_data(&html).unwrap();
+/// let xbrl_data = parse_ixbrl(&html).unwrap();
 /// println!("Extracted {} facts from {} contexts",
 ///          xbrl_data.facts.len(),
 ///          xbrl_data.contexts.len());
@@ -277,7 +305,7 @@ pub fn extract_xbrl_data(xml_content: &str) -> Result<Xbrl> {
 ///   it, and continues through any `ix:continuation` it points at
 /// - Facts nested inside another fact (every figure in a note that is tagged
 ///   as a text block) are extracted alongside it
-pub fn extract_ixbrl_data(html_content: &str) -> Result<Xbrl> {
+pub fn parse_ixbrl(html_content: &str) -> Result<Instance> {
     let mut reader = Reader::from_str(html_content);
     reader.config_mut().trim_text(true);
     reader.config_mut().expand_empty_elements = true;
@@ -286,7 +314,7 @@ pub fn extract_ixbrl_data(html_content: &str) -> Result<Xbrl> {
     // Skip unknown HTML entities like &nbsp; instead of erroring
     reader.config_mut().allow_unmatched_ends = true;
 
-    let mut xbrl = Xbrl::default();
+    let mut xbrl = Instance::default();
 
     // Use the generic event processor. For iXBRL, we process until the end of the file.
     process_events(&mut reader, &mut xbrl, true, |event| {
@@ -326,7 +354,7 @@ struct FactAttrs {
 /// order, and their values are settled once every continuation has been read.
 #[derive(Default)]
 struct InlineState {
-    /// One entry per inline fact: its index in `Xbrl::facts`, the attributes
+    /// One entry per inline fact: its index in `Instance::facts`, the attributes
     /// that shape its value, and the text collected between its tags.
     pending: Vec<(usize, FactAttrs, String)>,
 
@@ -467,7 +495,7 @@ fn read_inline_fact(
     e: &BytesStart,
     lowercase_tag: &str,
     reader: &mut Reader<&[u8]>,
-    xbrl: &mut Xbrl,
+    xbrl: &mut Instance,
     inline: &mut InlineState,
 ) -> Result<usize> {
     let (mut fact, attrs) = parse_fact_attributes_common(e, true);
@@ -487,7 +515,7 @@ fn read_inline_fact(
 fn read_inline_content(
     reader: &mut Reader<&[u8]>,
     lowercase_end_tag: &str,
-    xbrl: &mut Xbrl,
+    xbrl: &mut Instance,
     inline: &mut InlineState,
 ) -> Result<String> {
     let mut text = String::new();
@@ -498,7 +526,10 @@ fn read_inline_content(
 
     loop {
         buf.clear();
-        match reader.read_event_into(&mut buf)? {
+        match reader
+            .read_event_into(&mut buf)
+            .map_err(XbrlError::malformed)?
+        {
             Event::Text(chunk) => text.push_str(&decode_text(&chunk)),
             Event::CData(chunk) => text.push_str(&String::from_utf8_lossy(chunk.as_ref())),
             Event::Start(child) => {
@@ -545,7 +576,7 @@ fn read_inline_content(
 fn read_continuation(
     e: &BytesStart,
     reader: &mut Reader<&[u8]>,
-    xbrl: &mut Xbrl,
+    xbrl: &mut Instance,
     inline: &mut InlineState,
 ) -> Result<()> {
     let id = attribute(e, "id");
@@ -558,7 +589,7 @@ fn read_continuation(
 }
 
 /// Settles the value of every inline fact once the whole document has been read.
-fn settle_inline_facts(xbrl: &mut Xbrl, inline: InlineState) {
+fn settle_inline_facts(xbrl: &mut Instance, inline: InlineState) {
     // A filing chains a handful of continuations; the limit is only there so a
     // malformed cycle cannot spin.
     const MAX_CONTINUATIONS: usize = 4096;
@@ -727,7 +758,7 @@ fn negate(value: String) -> String {
 /// * `Result<()>` - Success or parsing error
 fn process_events<F>(
     reader: &mut Reader<&[u8]>,
-    xbrl: &mut Xbrl,
+    xbrl: &mut Instance,
     inline_document: bool,
     mut should_break: F,
 ) -> Result<()>
@@ -738,7 +769,9 @@ where
     let mut inline = InlineState::default();
     loop {
         buf.clear();
-        let event = reader.read_event_into(&mut buf)?;
+        let event = reader
+            .read_event_into(&mut buf)
+            .map_err(XbrlError::malformed)?;
 
         if should_break(&event) {
             break;
@@ -806,7 +839,7 @@ where
 /// as that is handled by the caller (`process_events`). It only processes facts.
 fn handle_start_event(
     reader: &mut Reader<&[u8]>,
-    xbrl: &mut Xbrl,
+    xbrl: &mut Instance,
     e: BytesStart,
     tag_name: String,
 ) -> Result<()> {
@@ -818,18 +851,25 @@ fn handle_start_event(
     fact.full_name = tag_name;
 
     if is_explicitly_nil {
-        // Fact is explicitly marked as nil - skip content and mark as nil
+        // RawFact is explicitly marked as nil - skip content and mark as nil
         fact.value = XbrlValue::Nil;
-        reader.read_to_end_into(e.name(), &mut Vec::new())?;
+        reader
+            .read_to_end_into(e.name(), &mut Vec::new())
+            .map_err(XbrlError::malformed)?;
     } else {
         // Extract text content and infer type
         let mut text_buf = Vec::new();
-        match reader.read_event_into(&mut text_buf)? {
+        match reader
+            .read_event_into(&mut text_buf)
+            .map_err(XbrlError::malformed)?
+        {
             Event::Text(text) => {
-                let value_str = text.unescape()?.into_owned();
+                let value_str = text.unescape().map_err(XbrlError::malformed)?.into_owned();
                 fact.value = parse_typed_value(&value_str);
                 // Consume the closing tag
-                reader.read_to_end_into(e.name(), &mut Vec::new())?;
+                reader
+                    .read_to_end_into(e.name(), &mut Vec::new())
+                    .map_err(XbrlError::malformed)?;
             }
             Event::End(end_tag) if end_tag.name() == e.name() => {
                 // Empty element (no text content) is considered Nil
@@ -837,7 +877,9 @@ fn handle_start_event(
             }
             _ => {
                 // Complex content - skip for now
-                reader.read_to_end_into(e.name(), &mut Vec::new())?;
+                reader
+                    .read_to_end_into(e.name(), &mut Vec::new())
+                    .map_err(XbrlError::malformed)?;
             }
         }
     }
@@ -855,7 +897,7 @@ fn handle_start_event(
 /// # Processing Strategy
 ///
 /// - **Link Elements**: Skipped entirely (not needed for financial data)
-/// - **Fact Elements**: Treated as nil values with only attribute data preserved
+/// - **RawFact Elements**: Treated as nil values with only attribute data preserved
 ///
 /// # Arguments
 ///
@@ -870,7 +912,7 @@ fn handle_start_event(
 /// ```
 ///
 /// This would be parsed as a fact with `XbrlValue::Nil`.
-fn handle_empty_event(xbrl: &mut Xbrl, e: BytesStart, tag_name: String) {
+fn handle_empty_event(xbrl: &mut Instance, e: BytesStart, tag_name: String) {
     // Skip link elements
     if tag_name.starts_with("link:") {
         return;
@@ -943,19 +985,23 @@ fn reconstruct_element(
     let mut writer = Writer::new(Vec::new());
 
     // Write the opening tag
-    writer.write_event(Event::Start(start_event.clone()))?;
+    writer
+        .write_event(Event::Start(start_event.clone()))
+        .map_err(XbrlError::malformed)?;
 
     let mut depth = 0;
     let mut buf = Vec::new();
 
     loop {
         buf.clear();
-        let event = reader.read_event_into(&mut buf)?;
+        let event = reader
+            .read_event_into(&mut buf)
+            .map_err(XbrlError::malformed)?;
 
         match &event {
             Event::End(e) if e.name().as_ref() == tag_name.as_bytes() && depth == 0 => {
                 // Found matching closing tag at root level
-                writer.write_event(event)?;
+                writer.write_event(event).map_err(XbrlError::malformed)?;
                 break;
             }
             Event::Start(_) => {
@@ -967,9 +1013,8 @@ fn reconstruct_element(
                 depth -= 1;
             }
             Event::Eof => {
-                return Err(XbrlError::DeserializationError(format!(
-                    "Unexpected end of document while parsing element <{}>",
-                    tag_name
+                return Err(XbrlError::malformed(format!(
+                    "the document ends inside <{tag_name}>"
                 )));
             }
             _ => {
@@ -977,13 +1022,12 @@ fn reconstruct_element(
             }
         }
 
-        writer.write_event(event)?;
+        writer.write_event(event).map_err(XbrlError::malformed)?;
     }
 
     // Convert the written bytes back to a string
     let xml_bytes = writer.into_inner();
-    String::from_utf8(xml_bytes)
-        .map_err(|e| XbrlError::DeserializationError(format!("UTF-8 conversion failed: {}", e)))
+    String::from_utf8(xml_bytes).map_err(XbrlError::malformed)
 }
 
 /// Unified handler for metadata (context, unit) and link elements
@@ -1037,7 +1081,7 @@ fn reconstruct_element(
 /// against malformed metadata that doesn't affect fact extraction.
 fn try_handle_metadata_or_link(
     reader: &mut Reader<&[u8]>,
-    xbrl: &mut Xbrl,
+    xbrl: &mut Instance,
     e: &BytesStart,
     tag_name: &str,
 ) -> Result<bool> {
@@ -1065,7 +1109,9 @@ fn try_handle_metadata_or_link(
         Ok(true)
     } else if lowercase_tag.starts_with("link:") {
         // Skip XBRL linkbase references - we don't need presentation/calculation links
-        reader.read_to_end_into(e.name(), &mut Vec::new())?;
+        reader
+            .read_to_end_into(e.name(), &mut Vec::new())
+            .map_err(XbrlError::malformed)?;
         Ok(true)
     } else {
         // This was not a metadata or link tag
@@ -1110,7 +1156,7 @@ fn try_handle_metadata_or_link(
 ///
 /// # Returns
 ///
-/// Returns the partially populated [`Fact`] and the [`FactAttrs`] that shape
+/// Returns the partially populated [`RawFact`] and the [`FactAttrs`] that shape
 /// its value: nil, and for iXBRL `scale`, `sign`, `continuedAt` and `escape`.
 ///
 /// # Example Usage
@@ -1131,8 +1177,8 @@ fn try_handle_metadata_or_link(
 /// - `fact.value` is immediately set to `XbrlValue::Nil`
 /// - `FactAttrs::is_nil` is returned as `true`
 /// - Callers should skip content extraction for nil facts
-fn parse_fact_attributes_common(e: &BytesStart, is_ixbrl: bool) -> (Fact, FactAttrs) {
-    let mut fact = Fact::default();
+fn parse_fact_attributes_common(e: &BytesStart, is_ixbrl: bool) -> (RawFact, FactAttrs) {
+    let mut fact = RawFact::default();
     let mut attrs = FactAttrs::default();
 
     for attr in e.attributes().flatten() {
@@ -1190,6 +1236,22 @@ mod tests {
     }
 
     #[test]
+    fn the_root_element_tells_an_instance_from_an_inline_document() {
+        assert!(is_xml_instance(
+            "<xbrl xmlns=\"http://www.xbrl.org/2003/instance\">"
+        ));
+        assert!(is_xml_instance(
+            "<?xml version=\"1.0\"?>\n<!-- <html> in a comment -->\n<xbrli:xbrl>"
+        ));
+        assert!(!is_xml_instance(
+            "<?xml version=\"1.0\"?><!DOCTYPE html><html xmlns:ix=\"http://www.xbrl.org/2013/inlineXBRL\">"
+        ));
+        assert!(!is_xml_instance("<HTML><body>"));
+        assert!(!is_xml_instance("no markup at all"));
+        assert!(!is_xml_instance(""));
+    }
+
+    #[test]
     fn test_parse_typed_value() {
         // Should preserve string content and trim whitespace
         assert_eq!(
@@ -1221,15 +1283,10 @@ mod tests {
         </xbrl>
         "#;
 
-        let result = extract_xbrl_data(malformed_content);
+        let result = parse_xml(malformed_content);
         assert!(result.is_err(), "Should fail to parse malformed XML");
 
-        match result {
-            Err(XbrlError::ParsingError(_)) => {
-                // Expected error type for XML parsing issues
-            }
-            _ => panic!("Should return ParsingError for malformed XML"),
-        }
+        assert!(matches!(result, Err(XbrlError::Malformed(_))));
     }
 
     #[test]
@@ -1248,7 +1305,7 @@ mod tests {
         </xbrli:xbrl>
         "#;
 
-        let result = extract_xbrl_data(content_with_namespace);
+        let result = parse_xml(content_with_namespace);
         assert!(result.is_ok(), "Should parse XBRL with namespace prefix");
 
         let xbrl = result.unwrap();
@@ -1265,14 +1322,9 @@ mod tests {
         </document>
         "#;
 
-        let result = extract_xbrl_data(content_without_root);
+        let result = parse_xml(content_without_root);
         assert!(result.is_err());
 
-        match result {
-            Err(XbrlError::DeserializationError(msg)) => {
-                assert!(msg.contains("Could not find root XBRL tag"));
-            }
-            _ => panic!("Should return DeserializationError for missing root"),
-        }
+        assert!(matches!(result, Err(XbrlError::NotXbrl(_))));
     }
 }

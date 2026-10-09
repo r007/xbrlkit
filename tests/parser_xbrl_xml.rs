@@ -9,13 +9,14 @@
 //! year end balance sheet instead of the quarter being filed.
 
 use std::fs::read_to_string;
-use xbrl::taxonomies::{dei::extract_dei, us_gaap::extract_financials};
+use xbrlkit::Document;
+use xbrlkit::taxonomies::{dei::extract_dei, us_gaap::extract_financials};
 
-const FORM_10Q_FIXTURE: &str = "../fixtures/filings/form_10q.xml";
-const FORM_10Q_1_FIXTURE: &str = "../fixtures/filings/form_10q_1.xml";
-const FORM_10Q_2_FIXTURE: &str = "../fixtures/filings/form_10q_2.xml";
-const FORM_10Q_3_FIXTURE: &str = "../fixtures/filings/form_10q_3.xml";
-const FORM_10Q_4_FIXTURE: &str = "../fixtures/filings/form_10q_4.xml";
+const FORM_10Q_FIXTURE: &str = "tests/fixtures/spac/form_10q.xml";
+const FORM_10Q_1_FIXTURE: &str = "tests/fixtures/spac/form_10q_1.xml";
+const FORM_10Q_2_FIXTURE: &str = "tests/fixtures/spac/form_10q_2.xml";
+const FORM_10Q_3_FIXTURE: &str = "tests/fixtures/spac/form_10q_3.xml";
+const FORM_10Q_4_FIXTURE: &str = "tests/fixtures/spac/form_10q_4.xml";
 
 const ALL_FIXTURES: [&str; 5] = [
     FORM_10Q_FIXTURE,
@@ -34,7 +35,7 @@ fn read_fixture(path: &str) -> String {
 fn test_default_namespace_contexts_are_parsed() {
     for path in ALL_FIXTURES {
         let content = read_fixture(path);
-        let xbrl = xbrl::parser::extract_xbrl_data(&content)
+        let xbrl = xbrlkit::parser::parse_xml(&content)
             .unwrap_or_else(|e| panic!("Parsing {path} should succeed: {e}"));
 
         assert!(
@@ -65,7 +66,7 @@ fn test_default_namespace_contexts_are_parsed() {
 fn test_context_children_are_not_emitted_as_facts() {
     for path in ALL_FIXTURES {
         let content = read_fixture(path);
-        let xbrl = xbrl::parser::extract_xbrl_data(&content).expect("Parsing should succeed");
+        let xbrl = xbrlkit::parser::parse_xml(&content).expect("Parsing should succeed");
 
         let dimension_facts = xbrl
             .facts
@@ -85,7 +86,7 @@ fn test_context_children_are_not_emitted_as_facts() {
 #[test]
 fn test_facts_carry_local_names() {
     let content = read_fixture(FORM_10Q_3_FIXTURE);
-    let xbrl = xbrl::parser::extract_xbrl_data(&content).expect("Parsing should succeed");
+    let xbrl = xbrlkit::parser::parse_xml(&content).expect("Parsing should succeed");
 
     let missing = xbrl
         .facts
@@ -107,7 +108,7 @@ fn test_facts_carry_local_names() {
 #[test]
 fn test_balance_sheet_uses_reporting_date_not_comparative() {
     let content = read_fixture(FORM_10Q_3_FIXTURE);
-    let context = xbrl::from_xbrl_str(&content).expect("XBRL parsing should succeed");
+    let context = Document::from_xml(&content).expect("XBRL parsing should succeed");
 
     let dei = extract_dei(&context).expect("DEI extraction should succeed");
     assert_eq!(
@@ -133,8 +134,8 @@ fn test_xml_and_ixbrl_entry_points_agree() {
     for path in ALL_FIXTURES {
         let content = read_fixture(path);
 
-        let from_xml = xbrl::from_xbrl_str(&content).expect("XML parsing should succeed");
-        let from_ixbrl = xbrl::from_ixbrl_str(&content).expect("iXBRL parsing should succeed");
+        let from_xml = Document::from_xml(&content).expect("XML parsing should succeed");
+        let from_ixbrl = Document::from_ixbrl(&content).expect("iXBRL parsing should succeed");
 
         let xml_financials = extract_financials(&from_xml).expect("extraction should succeed");
         let ixbrl_financials = extract_financials(&from_ixbrl).expect("extraction should succeed");

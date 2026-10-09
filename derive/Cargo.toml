@@ -1,8 +1,16 @@
 [package]
-name = "xbrl-derive"
-version = "0.1.0"
-edition = "2024"
-description = "#[derive(FromXbrl)]: binds a struct's fields to XBRL concepts"
+name = "xbrlkit-derive"
+description = "#[derive(FromXbrl)] for xbrlkit: binds a struct's fields to XBRL concepts"
+documentation = "https://docs.rs/xbrlkit-derive"
+keywords = ["xbrl", "derive", "sec", "edgar"]
+categories = ["parser-implementations", "finance"]
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
 
 [lib]
 proc-macro = true

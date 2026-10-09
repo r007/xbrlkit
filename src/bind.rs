@@ -7,10 +7,10 @@
 //! filled.
 //!
 //! ```text
-//!   Xbrl (contexts, units, facts)          <- parser.rs: everything the filing tags
+//!   Instance (contexts, units, facts)          <- parser.rs: everything the filing tags
 //!           │
 //!           ▼
-//!   XbrlDataContext                         <- indexed once per document
+//!   Document                         <- indexed once per document
 //!           │
 //!           │  extract::<T>()               <- T: FromXbrl, derived
 //!           ▼
@@ -37,7 +37,7 @@
 //!
 //! ## Which fact a field gets
 //!
-//! A struct is read in a [`Scope`]. Read on its own — [`XbrlDataContext::extract`] —
+//! A struct is read in a [`Scope`]. Read on its own — [`Document::extract`] —
 //! the scope is *unpinned*: each field takes the fact that best matches the
 //! period the filing reports on, falling back to a comparative or a
 //! dimensional breakdown when that is all the filing tags. Fields are chosen
@@ -51,7 +51,8 @@
 //! date's.
 
 use crate::error::{Result, XbrlError};
-use crate::structures::{Context, Fact as RawFact, Unit, Xbrl, XbrlValue};
+use crate::instance::{Context, Instance, RawFact, Unit, XbrlValue};
+use crate::parser;
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::cmp::{Ordering, Reverse};
@@ -132,7 +133,8 @@ pub struct Dimension {
     /// The axis, e.g. `"us-gaap:StatementClassOfStockAxis"`.
     pub axis: String,
 
-    /// The member on it, e.g. `"us-gaap:CommonClassAMember"`.
+    /// The member on it, e.g. `"us-gaap:CommonClassAMember"`. For a typed
+    /// dimension, the value the filing gives instead of a listed member.
     pub member: String,
 }
 
@@ -263,32 +265,17 @@ impl<'a> Candidate<'a> {
 /// Counts the dimension members that narrow a context. Zero means
 /// consolidated, entity-wide data — the figure on a financial statement line.
 fn member_count(context: &Context) -> usize {
-    context
-        .entity
-        .segment
-        .as_ref()
-        .map_or(0, |s| s.explicit_members.len())
-        + context
-            .scenario
-            .as_ref()
-            .map_or(0, |s| s.explicit_members.len())
+    context.explicit_members().count() + context.typed_members().count()
 }
 
 fn dimensions_of(context: &Context) -> Vec<Dimension> {
-    let segment = context
-        .entity
-        .segment
-        .iter()
-        .flat_map(|s| s.explicit_members.iter());
-    let scenario = context
-        .scenario
-        .iter()
-        .flat_map(|s| s.explicit_members.iter());
-    segment
-        .chain(scenario)
-        .map(|member| Dimension {
-            axis: member.dimension.trim().to_string(),
-            member: member.value.trim().to_string(),
+    let explicit = context.explicit_members().map(|m| (&m.dimension, &m.value));
+    let typed = context.typed_members().map(|m| (&m.dimension, &m.value));
+    explicit
+        .chain(typed)
+        .map(|(axis, member)| Dimension {
+            axis: axis.trim().to_string(),
+            member: member.trim().to_string(),
         })
         .collect()
 }
@@ -323,12 +310,31 @@ fn is_iso_date(s: &str) -> bool {
             .all(|(i, b)| i == 4 || i == 7 || b.is_ascii_digit())
 }
 
-/// Holds a parsed document with the indexes it takes to read structs from it.
+/// A parsed filing, indexed for reading structs from it.
 ///
-/// Built once per document; every extraction borrows it.
-pub struct XbrlDataContext {
-    /// The parsed document: every context, unit and fact the filing tags.
-    pub xbrl: Xbrl,
+/// Parse once, then extract as many views as you need; every extraction
+/// borrows the document.
+///
+/// ```
+/// use xbrlkit::Document;
+///
+/// let doc = Document::parse(r#"
+///     <xbrl xmlns="http://www.xbrl.org/2003/instance" xmlns:us-gaap="http://fasb.org/us-gaap/2025">
+///       <context id="fy">
+///         <entity><identifier scheme="http://www.sec.gov/CIK">0000320193</identifier></entity>
+///         <period><instant>2025-09-27</instant></period>
+///       </context>
+///       <unit id="usd"><measure>iso4217:USD</measure></unit>
+///       <us-gaap:Assets contextRef="fy" unitRef="usd" decimals="-6">359241000000</us-gaap:Assets>
+///     </xbrl>"#)?;
+///
+/// assert_eq!(doc.facts().len(), 1);
+/// assert_eq!(doc.get::<Option<f64>>(&["us-gaap:Assets"]), Some(359_241_000_000.0));
+/// # Ok::<(), xbrlkit::XbrlError>(())
+/// ```
+pub struct Document {
+    /// Every context, unit and fact the filing tags.
+    instance: Instance,
 
     /// Fact positions by full concept name (`"us-gaap:Assets"`).
     by_full_name: HashMap<String, Vec<usize>>,
@@ -346,9 +352,32 @@ pub struct XbrlDataContext {
     reporting_period: Option<Span>,
 }
 
-impl XbrlDataContext {
-    /// Indexes a parsed document.
-    pub fn new(xbrl: Xbrl) -> Self {
+impl Document {
+    /// Parses a filing, inline XBRL or a traditional XML instance, telling
+    /// the two apart by the root element.
+    ///
+    /// Use [`from_ixbrl`](Self::from_ixbrl) or [`from_xml`](Self::from_xml)
+    /// when you know which one you have.
+    pub fn parse(content: &str) -> Result<Self> {
+        match parser::is_xml_instance(content) {
+            true => Self::from_xml(content),
+            false => Self::from_ixbrl(content),
+        }
+    }
+
+    /// Parses inline XBRL: the HTML of a 10-K, 10-Q or 8-K as EDGAR serves it.
+    pub fn from_ixbrl(html: &str) -> Result<Self> {
+        parser::parse_ixbrl(html).map(Self::new)
+    }
+
+    /// Parses a traditional XBRL instance: the `.xml` exhibit of an older
+    /// filing, or the `_htm.xml` EDGAR extracts from an inline one.
+    pub fn from_xml(xml: &str) -> Result<Self> {
+        parser::parse_xml(xml).map(Self::new)
+    }
+
+    /// Indexes an already parsed instance.
+    pub fn new(xbrl: Instance) -> Self {
         let mut by_full_name = HashMap::<String, Vec<usize>>::new();
         let mut by_local_name = HashMap::<String, Vec<usize>>::new();
         for (i, fact) in xbrl.facts.iter().enumerate() {
@@ -374,8 +403,8 @@ impl XbrlDataContext {
             .map(|u| (u.id.clone(), unit_label(u)))
             .collect();
 
-        let mut data = XbrlDataContext {
-            xbrl,
+        let mut data = Document {
+            instance: xbrl,
             by_full_name,
             by_local_name,
             contexts,
@@ -384,6 +413,31 @@ impl XbrlDataContext {
         };
         data.reporting_period = data.resolve_reporting_period();
         data
+    }
+
+    /// Everything the parser read: contexts, units and facts, in document order.
+    pub fn instance(&self) -> &Instance {
+        &self.instance
+    }
+
+    /// Gives the parsed instance back, dropping the indexes.
+    pub fn into_instance(self) -> Instance {
+        self.instance
+    }
+
+    /// Every fact the filing tags, in document order, as the parser read it.
+    pub fn facts(&self) -> &[RawFact] {
+        &self.instance.facts
+    }
+
+    /// Every context: the periods and dimension members facts are reported for.
+    pub fn contexts(&self) -> &[Context] {
+        &self.instance.contexts
+    }
+
+    /// Every unit of measure the filing declares.
+    pub fn units(&self) -> &[Unit] {
+        &self.instance.units
     }
 
     /// The period this filing reports on, from the SEC "Required Context".
@@ -438,12 +492,12 @@ impl XbrlDataContext {
             .get(concept)
             .into_iter()
             .flatten()
-            .map(|&i| &self.xbrl.facts[i])
+            .map(|&i| &self.instance.facts[i])
     }
 
     fn context_of(&self, fact: &RawFact) -> Option<&Context> {
         let id = fact.context_ref.as_deref()?;
-        self.contexts.get(id).map(|&i| &self.xbrl.contexts[i])
+        self.contexts.get(id).map(|&i| &self.instance.contexts[i])
     }
 
     fn candidates<'a>(&'a self, concepts: &[&str]) -> Vec<Candidate<'a>> {
@@ -513,6 +567,39 @@ impl XbrlDataContext {
             .then_with(|| b.members.cmp(&a.members))
     }
 
+    /// Reads one concept without declaring a struct for it: what a field of
+    /// type `T` bound to `concepts` would hold.
+    ///
+    /// `T` chooses how much comes back, as it does for a field:
+    /// `Option<f64>` for the best fact's value, `Option<Fact<f64>>` for that
+    /// fact with its period, unit and dimensions, `Vec<Fact<f64>>` for every
+    /// period and dimension member. `concepts` are in order of preference. A
+    /// value that does not convert is left out.
+    ///
+    /// ```
+    /// # use xbrlkit::{Document, Fact};
+    /// # let doc = Document::new(Default::default());
+    /// let revenue: Option<f64> = doc.get(&[
+    ///     "us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax",
+    ///     "us-gaap:Revenues",
+    /// ]);
+    /// let shares_by_class: Vec<Fact<f64>> = doc.get(&["dei:EntityCommonStockSharesOutstanding"]);
+    /// # assert!(revenue.is_none() && shares_by_class.is_empty());
+    /// ```
+    pub fn get<T: FromFacts>(&self, concepts: &[&str]) -> T {
+        let problems = RefCell::new(Vec::new());
+        let scope = Scope {
+            data: self,
+            period: None,
+            problems: &problems,
+        };
+        T::from_facts(
+            &scope,
+            concepts,
+            concepts.first().copied().unwrap_or_default(),
+        )
+    }
+
     /// Reads `T`, each field from the fact that best matches the filing's
     /// reporting period. Fails on the first value that does not convert to its
     /// field's type.
@@ -564,7 +651,7 @@ impl XbrlDataContext {
 
 /// Where a struct is being read from: a document, and optionally one period of it.
 pub struct Scope<'a> {
-    data: &'a XbrlDataContext,
+    data: &'a Document,
 
     /// The period every field must come from. `None` when unpinned.
     period: Option<Span>,
@@ -639,9 +726,10 @@ impl<'a> Scope<'a> {
         let converted = T::from_fact_value(raw);
         if converted.is_none() {
             self.problems.borrow_mut().push(XbrlError::ValueConversion {
-                field_name: format!("{field} ({})", fact.full_name),
+                field: field.to_string(),
+                concept: fact.full_name.clone(),
                 value: raw.chars().take(80).collect(),
-                target_type: T::TYPE_NAME.to_string(),
+                target_type: T::TYPE_NAME,
             });
         }
         converted
@@ -827,7 +915,7 @@ pub fn each_period<T: FromXbrl>(scope: &Scope<'_>) -> Vec<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::structures::{Entity, ExplicitMember, Identifier, Period, Segment};
+    use crate::instance::{Entity, ExplicitMember, Identifier, Period, Segment};
 
     fn context(id: &str, period: Period) -> Context {
         Context {
@@ -872,6 +960,7 @@ mod tests {
                 dimension: axis.to_string(),
                 value: member.to_string(),
             }],
+            typed_members: Vec::new(),
         });
         context
     }
@@ -887,7 +976,7 @@ mod tests {
     }
 
     /// A Q3 10-Q: year-to-date is the required context.
-    fn q3_document(mut facts: Vec<RawFact>, mut contexts: Vec<Context>) -> XbrlDataContext {
+    fn q3_document(mut facts: Vec<RawFact>, mut contexts: Vec<Context>) -> Document {
         contexts.push(duration("ytd", "2024-01-01", "2024-09-30"));
         contexts.push(duration("q3", "2024-07-01", "2024-09-30"));
         contexts.push(duration("prior_ytd", "2023-01-01", "2023-09-30"));
@@ -895,14 +984,14 @@ mod tests {
         contexts.push(instant("year_end", "2023-12-31"));
         contexts.push(instant("cover", "2024-11-12"));
         facts.push(fact("dei:DocumentPeriodEndDate", "ytd", "2024-09-30"));
-        XbrlDataContext::new(Xbrl {
+        Document::new(Instance {
             contexts,
             units: Vec::new(),
             facts,
         })
     }
 
-    fn one<T: FromFacts>(data: &XbrlDataContext, period: Option<Span>, concepts: &[&str]) -> T {
+    fn one<T: FromFacts>(data: &Document, period: Option<Span>, concepts: &[&str]) -> T {
         let problems = RefCell::new(Vec::new());
         let scope = Scope {
             data,
@@ -1050,7 +1139,7 @@ mod tests {
 
     #[test]
     fn without_a_reporting_period_the_most_recent_wins() {
-        let data = XbrlDataContext::new(Xbrl {
+        let data = Document::new(Instance {
             contexts: vec![instant("old", "2023-03-31"), instant("new", "2024-03-31")],
             units: Vec::new(),
             facts: vec![
@@ -1202,7 +1291,11 @@ mod tests {
         );
         let problems = problems.into_inner();
         assert_eq!(problems.len(), 1);
-        assert!(problems[0].to_string().contains("assets (us-gaap:Assets)"));
+        assert!(
+            problems[0]
+                .to_string()
+                .contains("`assets` (us-gaap:Assets)")
+        );
     }
 
     #[test]

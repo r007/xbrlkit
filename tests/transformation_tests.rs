@@ -27,29 +27,29 @@ use std::collections::HashMap;
 use transformations::{
     apply_transformation, bool_ballot_box, dur_words_en, num_dot_decimal, num_words_en,
 };
-use xbrl::{from_ixbrl_str, structures::XbrlValue, transformations};
+use xbrlkit::{Document, instance::XbrlValue, transformations};
 
 // ============================================================================
 // FIXTURE CONSTANTS
 // ============================================================================
 
 /// 10-Q filing from EQV Ventures Acquisition Corp. 2 (Q2 2025)
-const FIXTURE_10Q: &str = include_str!("../../fixtures/html/10-q.html");
+const FIXTURE_10Q: &str = include_str!("fixtures/spac/10-q.html");
 
 /// 10-Q filing from Social Capital Hedosophia Holdings Corp. IV
-const FIXTURE_10Q_1: &str = include_str!("../../fixtures/html/10-q_1.html");
+const FIXTURE_10Q_1: &str = include_str!("fixtures/spac/10-q_1.html");
 
 /// 10-Q filing from Dune Acquisition Corporation (Q2 2025)
-const FIXTURE_10Q_2: &str = include_str!("../../fixtures/html/10-q_2.html");
+const FIXTURE_10Q_2: &str = include_str!("fixtures/spac/10-q_2.html");
 
 /// 10-Q filing (variant 3)
-const FIXTURE_10Q_3: &str = include_str!("../../fixtures/html/10-q_3.html");
+const FIXTURE_10Q_3: &str = include_str!("fixtures/spac/10-q_3.html");
 
 /// 8-K filing from Alchemy Investments Acquisition Corp 1 (Aug 2025)
-const FIXTURE_8K: &str = include_str!("../../fixtures/html/8-k.html");
+const FIXTURE_8K: &str = include_str!("fixtures/spac/8-k.html");
 
 /// 8-K filing from BOWX Acquisition Corp. (Nov 2021)
-const FIXTURE_8K_1: &str = include_str!("../../fixtures/html/8-k_1.html");
+const FIXTURE_8K_1: &str = include_str!("fixtures/spac/8-k_1.html");
 
 // ============================================================================
 // UNIT TRANSFORMATION TESTS
@@ -250,7 +250,7 @@ fn test_transformations_across_all_fixtures() {
     for (name, content) in fixtures {
         println!("\n=== Testing transformations in {} ===", name);
 
-        let result = from_ixbrl_str(content);
+        let result = Document::from_ixbrl(content);
         assert!(
             result.is_ok(),
             "Failed to parse {}: {:?}",
@@ -259,7 +259,7 @@ fn test_transformations_across_all_fixtures() {
         );
 
         let context = result.unwrap();
-        let xbrl = &context.xbrl;
+        let xbrl = context.instance();
 
         // All fixtures should have some facts
         assert!(!xbrl.facts.is_empty(), "{} should contain facts", name);
@@ -302,11 +302,11 @@ fn test_transformations_across_all_fixtures() {
 #[test]
 fn test_common_transformations_in_fixtures() {
     // Test on the most comprehensive fixture (10-q_2.html)
-    let result = from_ixbrl_str(FIXTURE_10Q_2);
+    let result = Document::from_ixbrl(FIXTURE_10Q_2);
     assert!(result.is_ok(), "Failed to parse 10-q_2.html");
 
     let context = result.unwrap();
-    let xbrl = &context.xbrl;
+    let xbrl = context.instance();
 
     // Find ballot box transformations (used for yes/no questions)
     let ballot_box_facts: Vec<_> = xbrl
@@ -392,11 +392,11 @@ fn test_transformations_in_8k_filings() {
     for (name, content) in fixtures_8k {
         println!("\n=== Testing 8-K: {} ===", name);
 
-        let result = from_ixbrl_str(content);
+        let result = Document::from_ixbrl(content);
         assert!(result.is_ok(), "Failed to parse {}", name);
 
         let context = result.unwrap();
-        let xbrl = &context.xbrl;
+        let xbrl = context.instance();
 
         // 8-K should have DocumentType fact
         let doc_type = xbrl.facts.iter().find(|f| f.local_name == "DocumentType");

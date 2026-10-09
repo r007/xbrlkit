@@ -10,7 +10,7 @@
 //! but works with any US-GAAP compliant XBRL document.
 
 use crate::FromXbrl;
-use crate::bind::{Fact, XbrlDataContext};
+use crate::bind::{Document, Fact};
 use crate::error::Result;
 use serde::{Deserialize, Serialize};
 
@@ -1153,7 +1153,7 @@ pub struct Financials {
 /// Extracts a comprehensive set of financial data from an XBRL document.
 ///
 /// Fails on the first value that does not convert to its field's type; use
-/// [`XbrlDataContext::extract_lenient`] to keep the rest of the struct.
-pub fn extract_financials(context: &XbrlDataContext) -> Result<Financials> {
+/// [`Document::extract_lenient`] to keep the rest of the struct.
+pub fn extract_financials(context: &Document) -> Result<Financials> {
     context.extract()
 }

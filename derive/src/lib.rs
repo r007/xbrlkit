@@ -31,7 +31,7 @@
 //! | `period_start` / `period_end`        | the dates of the period the struct was read for          |
 //! | *(none)*                             | left at its `Default`                                    |
 //!
-//! What a `concept` field holds is decided by its type — see `xbrl::bind::FromFacts`.
+//! What a `concept` field holds is decided by its type — see `xbrlkit::bind::FromFacts`.
 //!
 //! ## Struct attributes
 //!
@@ -91,14 +91,14 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
             Binding::Concepts(concepts) => {
                 concept_lists.push(quote! { out.extend_from_slice(&[#(#concepts),*]); });
                 quote! {
-                    <#ty as ::xbrl::bind::FromFacts>::from_facts(scope, &[#(#concepts),*], #field_name)
+                    <#ty as ::xbrlkit::bind::FromFacts>::from_facts(scope, &[#(#concepts),*], #field_name)
                 }
             }
             Binding::Nested => {
-                concept_lists.push(quote! { <#ty as ::xbrl::bind::FromXbrl>::concepts(out); });
-                quote! { <#ty as ::xbrl::bind::FromXbrl>::from_xbrl(scope) }
+                concept_lists.push(quote! { <#ty as ::xbrlkit::bind::FromXbrl>::concepts(out); });
+                quote! { <#ty as ::xbrlkit::bind::FromXbrl>::from_xbrl(scope) }
             }
-            Binding::EachPeriod => quote! { ::xbrl::bind::each_period(scope) },
+            Binding::EachPeriod => quote! { ::xbrlkit::bind::each_period(scope) },
             Binding::PeriodStart => quote! { scope.period_start() },
             Binding::PeriodEnd => quote! { scope.period_end() },
             Binding::Unbound => quote! { ::core::default::Default::default() },
@@ -109,14 +109,14 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 
     Ok(quote! {
-        impl #impl_generics ::xbrl::bind::FromXbrl for #name #ty_generics #where_clause {
-            const PERIOD_KIND: ::xbrl::bind::PeriodKind = #period_kind;
+        impl #impl_generics ::xbrlkit::bind::FromXbrl for #name #ty_generics #where_clause {
+            const PERIOD_KIND: ::xbrlkit::bind::PeriodKind = #period_kind;
 
             fn concepts(out: &mut ::std::vec::Vec<&'static str>) {
                 #(#concept_lists)*
             }
 
-            fn from_xbrl(scope: &::xbrl::bind::Scope<'_>) -> Self {
+            fn from_xbrl(scope: &::xbrlkit::bind::Scope<'_>) -> Self {
                 Self { #(#field_values),* }
             }
         }
@@ -124,13 +124,13 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
 }
 
 fn container_period_kind(input: &DeriveInput) -> syn::Result<TokenStream2> {
-    let mut kind = quote! { ::xbrl::bind::PeriodKind::Any };
+    let mut kind = quote! { ::xbrlkit::bind::PeriodKind::Any };
     for attr in input.attrs.iter().filter(|a| a.path().is_ident("xbrl")) {
         attr.parse_nested_meta(|meta| {
             if meta.path.is_ident("instant") {
-                kind = quote! { ::xbrl::bind::PeriodKind::Instant };
+                kind = quote! { ::xbrlkit::bind::PeriodKind::Instant };
             } else if meta.path.is_ident("duration") {
-                kind = quote! { ::xbrl::bind::PeriodKind::Duration };
+                kind = quote! { ::xbrlkit::bind::PeriodKind::Duration };
             } else {
                 return Err(meta.error("expected `instant` or `duration`"));
             }

@@ -1,26 +1,47 @@
-[package]
-name = "xbrl"
+[workspace]
+members = [".", "derive"]
+resolver = "3"
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
-description = "A high-performance, context-aware XBRL parser for SEC filings"
+rust-version = "1.85"
+authors = ["Sergey Monin <moninsergei@gmail.com>"]
+license = "MIT"
+repository = "https://github.com/r007/xbrlkit"
+
+[package]
+name = "xbrlkit"
+description = "Read SEC XBRL and inline XBRL filings into typed Rust structs"
+documentation = "https://docs.rs/xbrlkit"
+keywords = ["xbrl", "ixbrl", "sec", "edgar", "finance"]
+categories = ["parser-implementations", "finance"]
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+# The fixtures are real filings, megabytes each. They stay in the repository.
+exclude = ["tests/", ".github/", ".gitignore"]
+
+[features]
+default = ["derive", "taxonomies"]
+# `#[derive(FromXbrl)]`.
+derive = ["dep:xbrlkit-derive"]
+# Ready-made structs for the `dei` cover page and the `us-gaap` statements.
+taxonomies = ["derive"]
 
 [dependencies]
-# Serialization & Data
-serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
-quick-xml = { workspace = true, features = ["serde"] }
-
-# Utilities
-once_cell = { workspace = true }
-regex = { workspace = true }
-
-# Error Handling & Logging
-thiserror = { workspace = true }
-
-# `#[derive(FromXbrl)]`
-xbrl-derive = { path = "derive" }
+quick-xml = { version = "0.37.5", features = ["serialize"] }
+regex = "1.11"
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "2.0"
+xbrlkit-derive = { version = "=0.1.0", path = "derive", optional = true }
 
 [dev-dependencies]
-# The taxonomy structs are stored through serde_arrow; a test holds them to it.
-serde_arrow = { workspace = true }
-arrow = { version = "55.2.0", default-features = false }
+serde_json = "1.0"
+
+[package.metadata.docs.rs]
+all-features = true

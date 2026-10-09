@@ -5,13 +5,13 @@
 
 use std::collections::HashSet;
 use std::fs;
-use xbrl::parser::extract_ixbrl_data;
-use xbrl::structures::XbrlValue;
+use xbrlkit::instance::XbrlValue;
+use xbrlkit::parser::parse_ixbrl;
 
-const FORM_10Q_FIXTURE: &str = "../fixtures/html/10-q.html";
-const FORM_10Q_1_FIXTURE: &str = "../fixtures/html/10-q_1.html";
-const FORM_10Q_2_FIXTURE: &str = "../fixtures/html/10-q_2.html";
-const FORM_8K_FIXTURE: &str = "../fixtures/html/8-k.html";
+const FORM_10Q_FIXTURE: &str = "tests/fixtures/spac/10-q.html";
+const FORM_10Q_1_FIXTURE: &str = "tests/fixtures/spac/10-q_1.html";
+const FORM_10Q_2_FIXTURE: &str = "tests/fixtures/spac/10-q_2.html";
+const FORM_8K_FIXTURE: &str = "tests/fixtures/spac/8-k.html";
 
 // ============================================================================
 // MULTI-FIXTURE VALIDATION TESTS
@@ -29,7 +29,7 @@ fn test_all_fixtures_parse_successfully() {
     for (name, path) in fixtures {
         let bytes = fs::read(path).expect(&format!("Failed to read {}", name));
         let html = String::from_utf8_lossy(&bytes).to_string();
-        let result = extract_ixbrl_data(&html);
+        let result = parse_ixbrl(&html);
 
         assert!(
             result.is_ok(),
@@ -67,7 +67,7 @@ fn test_10q_variant_consistency() {
         .map(|(name, path)| {
             let bytes = fs::read(path).expect(&format!("Failed to read {}", name));
             let html = String::from_utf8_lossy(&bytes).to_string();
-            extract_ixbrl_data(&html).expect(&format!("Failed to parse {}", name))
+            parse_ixbrl(&html).expect(&format!("Failed to parse {}", name))
         })
         .collect();
 
@@ -99,7 +99,7 @@ fn test_10q_variant_consistency() {
 fn test_8k_specific_characteristics() {
     let bytes = fs::read(FORM_8K_FIXTURE).expect("Failed to read 8-K fixture");
     let html = String::from_utf8_lossy(&bytes).to_string();
-    let xbrl = extract_ixbrl_data(&html).expect("Failed to parse 8-K");
+    let xbrl = parse_ixbrl(&html).expect("Failed to parse 8-K");
 
     println!(
         "8-K: {} contexts, {} units, {} facts",
@@ -133,7 +133,7 @@ fn test_case_insensitive_attribute_parsing() {
     // Real SEC filings use both contextRef and contextref, unitRef and unitref
     let bytes = fs::read(FORM_10Q_FIXTURE).expect("Failed to read fixture");
     let html = String::from_utf8_lossy(&bytes).to_string();
-    let xbrl = extract_ixbrl_data(&html).expect("Failed to parse iXBRL");
+    let xbrl = parse_ixbrl(&html).expect("Failed to parse iXBRL");
 
     // Check that facts have context references (regardless of attribute casing)
     let facts_with_context = xbrl
@@ -163,7 +163,7 @@ fn test_scale_attribute_application() {
     // Test that scale attributes are correctly applied to numeric values
     let bytes = fs::read(FORM_10Q_FIXTURE).expect("Failed to read fixture");
     let html = String::from_utf8_lossy(&bytes).to_string();
-    let xbrl = extract_ixbrl_data(&html).expect("Failed to parse iXBRL");
+    let xbrl = parse_ixbrl(&html).expect("Failed to parse iXBRL");
 
     // Find facts that likely have scale attributes (large monetary amounts)
     let scaled_facts: Vec<_> = xbrl
@@ -195,7 +195,7 @@ fn test_comma_removal_from_numbers() {
     // Test that commas are removed from formatted numbers (e.g., "4,921" -> "4921")
     let bytes = fs::read(FORM_10Q_FIXTURE).expect("Failed to read fixture");
     let html = String::from_utf8_lossy(&bytes).to_string();
-    let xbrl = extract_ixbrl_data(&html).expect("Failed to parse iXBRL");
+    let xbrl = parse_ixbrl(&html).expect("Failed to parse iXBRL");
 
     // Check that numeric values don't contain commas
     for fact in &xbrl.facts {
@@ -221,7 +221,7 @@ fn test_comma_removal_from_numbers() {
 fn test_context_entity_identifiers() {
     let bytes = fs::read(FORM_10Q_FIXTURE).expect("Failed to read fixture");
     let html = String::from_utf8_lossy(&bytes).to_string();
-    let xbrl = extract_ixbrl_data(&html).expect("Failed to parse iXBRL");
+    let xbrl = parse_ixbrl(&html).expect("Failed to parse iXBRL");
 
     // All contexts should have entity identifiers (CIK numbers)
     for context in &xbrl.contexts {
@@ -246,7 +246,7 @@ fn test_context_entity_identifiers() {
 fn test_unit_measures() {
     let bytes = fs::read(FORM_10Q_FIXTURE).expect("Failed to read fixture");
     let html = String::from_utf8_lossy(&bytes).to_string();
-    let xbrl = extract_ixbrl_data(&html).expect("Failed to parse iXBRL");
+    let xbrl = parse_ixbrl(&html).expect("Failed to parse iXBRL");
 
     // Check that units have measures
     for unit in &xbrl.units {
@@ -286,7 +286,7 @@ fn test_unit_measures() {
 fn test_temporal_contexts_validity() {
     let bytes = fs::read(FORM_10Q_FIXTURE).expect("Failed to read fixture");
     let html = String::from_utf8_lossy(&bytes).to_string();
-    let xbrl = extract_ixbrl_data(&html).expect("Failed to parse iXBRL");
+    let xbrl = parse_ixbrl(&html).expect("Failed to parse iXBRL");
 
     let mut instant_count = 0;
     let mut duration_count = 0;
@@ -332,7 +332,7 @@ fn test_temporal_contexts_validity() {
 fn test_fact_name_parsing() {
     let bytes = fs::read(FORM_10Q_FIXTURE).expect("Failed to read fixture");
     let html = String::from_utf8_lossy(&bytes).to_string();
-    let xbrl = extract_ixbrl_data(&html).expect("Failed to parse iXBRL");
+    let xbrl = parse_ixbrl(&html).expect("Failed to parse iXBRL");
 
     for fact in &xbrl.facts {
         // Full name should contain namespace prefix
@@ -371,7 +371,7 @@ fn test_nil_value_handling() {
     for (name, path) in fixtures {
         let bytes = fs::read(path).expect(&format!("Failed to read {}", name));
         let html = String::from_utf8_lossy(&bytes).to_string();
-        let xbrl = extract_ixbrl_data(&html).expect(&format!("Failed to parse {}", name));
+        let xbrl = parse_ixbrl(&html).expect(&format!("Failed to parse {}", name));
 
         let nil_facts = xbrl
             .facts
@@ -390,7 +390,7 @@ fn test_nil_value_handling() {
 fn test_fact_references_valid_contexts() {
     let bytes = fs::read(FORM_10Q_FIXTURE).expect("Failed to read fixture");
     let html = String::from_utf8_lossy(&bytes).to_string();
-    let xbrl = extract_ixbrl_data(&html).expect("Failed to parse iXBRL");
+    let xbrl = parse_ixbrl(&html).expect("Failed to parse iXBRL");
 
     // Build a set of valid context IDs
     let valid_context_ids: HashSet<_> = xbrl.contexts.iter().map(|c| c.id.as_str()).collect();
@@ -412,7 +412,7 @@ fn test_fact_references_valid_contexts() {
 fn test_fact_references_valid_units() {
     let bytes = fs::read(FORM_10Q_FIXTURE).expect("Failed to read fixture");
     let html = String::from_utf8_lossy(&bytes).to_string();
-    let xbrl = extract_ixbrl_data(&html).expect("Failed to parse iXBRL");
+    let xbrl = parse_ixbrl(&html).expect("Failed to parse iXBRL");
 
     // Build a set of valid unit IDs
     let valid_unit_ids: HashSet<_> = xbrl.units.iter().map(|u| u.id.as_str()).collect();
@@ -484,7 +484,7 @@ fn test_parser_handles_malformed_html() {
     let html = String::from_utf8_lossy(&bytes).to_string();
 
     // Should not panic or error out
-    let result = extract_ixbrl_data(&html);
+    let result = parse_ixbrl(&html);
     assert!(result.is_ok(), "Parser should handle real-world HTML");
 
     let xbrl = result.unwrap();
@@ -505,7 +505,7 @@ fn test_parser_handles_unknown_entities() {
     let bytes = fs::read(FORM_10Q_FIXTURE).expect("Failed to read fixture");
     let html = String::from_utf8_lossy(&bytes).to_string();
 
-    let xbrl = extract_ixbrl_data(&html).expect("Should parse despite unknown entities");
+    let xbrl = parse_ixbrl(&html).expect("Should parse despite unknown entities");
 
     // Should have extracted values without crashing on entity errors
     let non_nil_facts = xbrl
@@ -528,7 +528,7 @@ fn test_performance_large_document() {
     let html = String::from_utf8_lossy(&bytes).to_string();
 
     let start = Instant::now();
-    let xbrl = extract_ixbrl_data(&html).expect("Failed to parse");
+    let xbrl = parse_ixbrl(&html).expect("Failed to parse");
     let duration = start.elapsed();
 
     println!(
@@ -606,7 +606,7 @@ fn test_html_wrapped_value_is_read_and_empty_is_nil() {
 </body>
 </html>"#;
 
-    let xbrl = extract_ixbrl_data(html).expect("should parse iXBRL without error");
+    let xbrl = parse_ixbrl(html).expect("should parse iXBRL without error");
 
     // Case 1: span-wrapped value is read, and its format applied
     let annual_report = xbrl
@@ -680,7 +680,7 @@ fn test_nested_ixbrl_date_extraction() {
 </body>
 </html>"#;
 
-    let xbrl = extract_ixbrl_data(html).expect("should parse iXBRL");
+    let xbrl = parse_ixbrl(html).expect("should parse iXBRL");
 
     let period_end = xbrl
         .facts

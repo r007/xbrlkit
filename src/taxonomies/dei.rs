@@ -8,7 +8,7 @@
 //! the reporting entity, contact information, audit details, and various regulatory flags.
 
 use crate::FromXbrl;
-use crate::bind::{Fact, XbrlDataContext};
+use crate::bind::{Document, Fact};
 use crate::error::Result;
 use serde::{Deserialize, Serialize};
 
@@ -497,7 +497,7 @@ pub struct DeiInfo {
 /// Extracts DEI (Document and Entity Information) from an XBRL document.
 ///
 /// Fails on the first value that does not convert to its field's type; use
-/// [`XbrlDataContext::extract_lenient`] to keep the rest of the struct.
-pub fn extract_dei(context: &XbrlDataContext) -> Result<DeiInfo> {
+/// [`Document::extract_lenient`] to keep the rest of the struct.
+pub fn extract_dei(context: &Document) -> Result<DeiInfo> {
     context.extract()
 }

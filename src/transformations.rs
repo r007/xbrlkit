@@ -25,9 +25,9 @@
 //!
 //! See: https://www.xbrl.org/specification/inlinexbrl-transformation-rules-registry-4/
 
-use once_cell::sync::Lazy;
 use regex::Regex;
 use std::collections::HashMap;
+use std::sync::LazyLock as Lazy;
 
 // A transformation is a function that takes a string slice and returns a normalized String.
 type Transformation = fn(&str) -> Result<String, TransformationError>;
@@ -50,7 +50,7 @@ pub enum TransformationError {
 ///
 /// ## Examples
 /// ```
-/// use xbrl::transformations::bool_ballot_box;
+/// use xbrlkit::transformations::bool_ballot_box;
 ///
 /// assert_eq!(bool_ballot_box("☐").unwrap(), "false");
 /// assert_eq!(bool_ballot_box("☑").unwrap(), "true");
@@ -1116,7 +1116,7 @@ static IXT_REGISTRY_V4: Lazy<TransformationRegistry> = Lazy::new(|| {
 ///
 /// ## Examples
 /// ```
-/// use xbrl::transformations::apply_transformation;
+/// use xbrlkit::transformations::apply_transformation;
 ///
 /// let result = apply_transformation("one", "ixt-sec:numwordsen");
 /// assert_eq!(result.unwrap(), "1");

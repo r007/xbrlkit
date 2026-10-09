@@ -3,8 +3,8 @@
 //! What the value of an inline fact is: its sign, its scale, the text HTML
 //! wraps, the facts nested inside it, and the text it continues into.
 
-use xbrl::parser::extract_ixbrl_data;
-use xbrl::structures::{Xbrl, XbrlValue};
+use xbrlkit::instance::{Instance, XbrlValue};
+use xbrlkit::parser::parse_ixbrl;
 
 /// Wraps a body in the smallest document the parser accepts.
 fn document(body: &str) -> String {
@@ -19,12 +19,12 @@ fn document(body: &str) -> String {
     )
 }
 
-fn parse(body: &str) -> Xbrl {
-    extract_ixbrl_data(&document(body)).expect("document should parse")
+fn parse(body: &str) -> Instance {
+    parse_ixbrl(&document(body)).expect("document should parse")
 }
 
 /// The value of the only fact tagged `name`.
-fn value(xbrl: &Xbrl, name: &str) -> Option<String> {
+fn value(xbrl: &Instance, name: &str) -> Option<String> {
     let mut found = xbrl.facts.iter().filter(|f| f.full_name == name);
     let fact = found.next().unwrap_or_else(|| panic!("no fact {name}"));
     assert!(found.next().is_none(), "more than one fact {name}");
