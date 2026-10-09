@@ -24,7 +24,10 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 # The fixtures are real filings, megabytes each. They stay in the repository.
-exclude = ["tests/", ".github/", ".gitignore"]
+exclude = ["tests/", "examples/edgar/", "benches/compare/", ".github/", ".gitignore"]
+
+[lib]
+bench = false
 
 [features]
 default = ["derive", "taxonomies"]
@@ -43,5 +46,19 @@ xbrlkit-derive = { version = "=0.1.0", path = "derive", optional = true }
 [dev-dependencies]
 serde_json = "1.0"
 
+[[bench]]
+name = "parse"
+harness = false
+required-features = ["taxonomies"]
+
+[[example]]
+name = "financials"
+required-features = ["taxonomies"]
+
+[[example]]
+name = "custom_struct"
+required-features = ["derive"]
+
 [package.metadata.docs.rs]
 all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

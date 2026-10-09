@@ -1,0 +1,14 @@
+# A standalone project, not part of the xbrlkit workspace: it pulls in an HTTP
+# client and an async runtime, which the library itself has no use for.
+[package]
+name = "edgar-financials"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+edgarkit = "0.6"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+xbrlkit = { path = "../.." }
+
+[workspace]

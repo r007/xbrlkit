@@ -1,0 +1,14 @@
+# A standalone project, not part of the xbrlkit workspace and not published:
+# it times xbrlkit beside the other Rust XBRL parsers on the same files.
+[package]
+name = "compare"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+crabrl = { version = "=0.1.0", default-features = false, features = ["parallel"] }
+xbrl-rs = "=0.3.0"
+xbrlkit = { path = "../.." }
+
+[workspace]

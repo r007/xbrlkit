@@ -315,7 +315,7 @@ fn test_common_transformations_in_fixtures() {
         .filter(|f| {
             f.format
                 .as_ref()
-                .map_or(false, |fmt| fmt.contains("boolballotbox"))
+                .is_some_and(|fmt| fmt.contains("boolballotbox"))
         })
         .collect();
 
@@ -337,9 +337,9 @@ fn test_common_transformations_in_fixtures() {
         .facts
         .iter()
         .filter(|f| {
-            f.format.as_ref().map_or(false, |fmt| {
-                fmt.contains("num-dot-decimal") || fmt.contains("numdotdecimal")
-            })
+            f.format
+                .as_ref()
+                .is_some_and(|fmt| fmt.contains("num-dot-decimal") || fmt.contains("numdotdecimal"))
         })
         .collect();
 
@@ -363,7 +363,7 @@ fn test_common_transformations_in_fixtures() {
         .filter(|f| {
             f.format
                 .as_ref()
-                .map_or(false, |fmt| fmt.contains("exchnameen"))
+                .is_some_and(|fmt| fmt.contains("exchnameen"))
         })
         .collect();
 
@@ -410,7 +410,7 @@ fn test_transformations_in_8k_filings() {
             .filter(|f| {
                 f.format
                     .as_ref()
-                    .map_or(false, |fmt| fmt.contains("date") && !fmt.contains("fixed"))
+                    .is_some_and(|fmt| fmt.contains("date") && !fmt.contains("fixed"))
             })
             .collect();
 

@@ -934,11 +934,9 @@ fn parse_fact_attributes_common(e: &BytesStart, is_ixbrl: bool) -> (RawFact, Fac
             "escape" if is_ixbrl => attrs.escape = value_str.trim().eq_ignore_ascii_case("true"),
 
             // Unified nil handling
-            "xsi:nil" | "nil" => {
-                if value_str.to_lowercase() == "true" {
-                    fact.value = XbrlValue::Nil;
-                    attrs.is_nil = true;
-                }
+            "xsi:nil" | "nil" if value_str.eq_ignore_ascii_case("true") => {
+                fact.value = XbrlValue::Nil;
+                attrs.is_nil = true;
             }
             _ => {
                 // Ignore other attributes like arcrole, title, etc.

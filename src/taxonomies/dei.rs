@@ -1,11 +1,29 @@
-//! # DEI (Document and Entity Information) Taxonomy Extractor
+//! # Document and Entity Information
 //!
-//! Provides high-level functions and structs for extracting standard document and entity
-//! metadata from XBRL documents based on the SEC's DEI taxonomy.
+//! The `dei` taxonomy is the cover page of every SEC filing, tagged: the
+//! form type and the period it covers, the registrant's name, CIK, state of
+//! incorporation and filer status, its address, its securities and where
+//! they trade, and — on an annual report — its auditor.
 //!
-//! This module handles the comprehensive Document and Entity Information (DEI) taxonomy
-//! as defined by the SEC. It extracts metadata about the filing document itself,
-//! the reporting entity, contact information, audit details, and various regulatory flags.
+//! ```no_run
+//! use xbrlkit::Document;
+//! use xbrlkit::taxonomies::dei::DeiInfo;
+//!
+//! let doc = Document::parse(&std::fs::read_to_string("aapl-20250927.htm")?)?;
+//! let dei: DeiInfo = doc.extract()?;
+//!
+//! println!(
+//!     "{:?} ({:?}) filed a {:?} for the period ending {:?}",
+//!     dei.entity.entity_registrant_name,
+//!     dei.entity.entity_central_index_key,
+//!     dei.document.document_type,
+//!     dei.document.document_period_end_date,
+//! );
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! Field names are the concept names in snake case, so
+//! `dei:EntityRegistrantName` is `entity_registrant_name`.
 
 use crate::FromXbrl;
 use crate::bind::{Document, Fact};
@@ -494,10 +512,10 @@ pub struct DeiInfo {
     pub audit: AuditInfo,
 }
 
-/// Extracts DEI (Document and Entity Information) from an XBRL document.
+/// Reads the cover page from a document.
 ///
 /// Fails on the first value that does not convert to its field's type; use
 /// [`Document::extract_lenient`] to keep the rest of the struct.
-pub fn extract_dei(context: &Document) -> Result<DeiInfo> {
-    context.extract()
+pub fn extract_dei(document: &Document) -> Result<DeiInfo> {
+    document.extract()
 }

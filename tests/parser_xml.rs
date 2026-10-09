@@ -8,6 +8,8 @@
 //! fact happened to appear last in the document — so a 10-Q reported its prior
 //! year end balance sheet instead of the quarter being filed.
 
+#![cfg(feature = "taxonomies")]
+
 use std::fs::read_to_string;
 use xbrlkit::Document;
 use xbrlkit::taxonomies::{dei::extract_dei, us_gaap::extract_financials};

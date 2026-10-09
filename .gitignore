@@ -1,6 +1,7 @@
 /target
 **/target
-Cargo.lock
+/examples/edgar/Cargo.lock
+/benches/compare/Cargo.lock
 .vscode
 .idea
 *.swp

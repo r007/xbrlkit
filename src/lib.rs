@@ -6,6 +6,8 @@
 //! `#[derive(FromXbrl)]`.
 //!
 //! ```
+//! # #[cfg(feature = "derive")]
+//! # fn main() -> Result<(), xbrlkit::XbrlError> {
 //! use xbrlkit::{Document, FromXbrl};
 //!
 //! #[derive(Debug, Default, FromXbrl)]
@@ -44,7 +46,10 @@
 //! assert_eq!(summary.name.as_deref(), Some("Apple Inc."));
 //! assert_eq!(summary.assets, Some(359_241_000_000.0));
 //! assert_eq!(summary.revenue, Some(416_161_000_000.0));
-//! # Ok::<(), xbrlkit::XbrlError>(())
+//! # Ok(())
+//! # }
+//! # #[cfg(not(feature = "derive"))]
+//! # fn main() {}
 //! ```
 //!
 //! ## Two layers

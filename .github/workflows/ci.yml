@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-features --all-targets -- -D warnings
+      - run: cargo test --workspace --all-features
+      # The parser and the trait have to stand without the derive and the
+      # ready-made structs, and the derive without the structs.
+      - name: Check each feature set
+        run: |
+          cargo clippy --no-default-features --all-targets -- -D warnings
+          cargo clippy --no-default-features --features derive --all-targets -- -D warnings
+          cargo test --no-default-features
+      - name: Build the documentation
+        run: cargo doc --workspace --all-features --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+      # What `cargo publish` would upload has to build on its own, without the
+      # fixtures the repository carries.
+      - run: cargo package --workspace --allow-dirty
+
+  msrv:
+    name: Rust 1.85
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace --all-features
+
+  standalone:
+    name: Standalone projects
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            examples/edgar
+            benches/compare
+      # Neither is a workspace member: one fetches from EDGAR, the other pulls
+      # in the crates it compares against.
+      - run: cargo check --manifest-path examples/edgar/Cargo.toml
+      - run: cargo check --manifest-path benches/compare/Cargo.toml

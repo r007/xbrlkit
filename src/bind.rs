@@ -26,6 +26,8 @@
 //! ## Describing a view
 //!
 //! ```
+//! # #[cfg(feature = "derive")]
+//! # mod example {
 //! use serde::Serialize;
 //! use xbrlkit::{Fact, FromXbrl};
 //!
@@ -61,6 +63,7 @@
 //!     #[xbrl(each_period)]
 //!     balance_sheets: Vec<BalanceSheet>,
 //! }
+//! # }
 //! ```
 //!
 //! ### Field attributes

@@ -27,7 +27,7 @@ fn test_all_fixtures_parse_successfully() {
     ];
 
     for (name, path) in fixtures {
-        let bytes = fs::read(path).expect(&format!("Failed to read {}", name));
+        let bytes = fs::read(path).unwrap_or_else(|_| panic!("Failed to read {}", name));
         let html = String::from_utf8_lossy(&bytes).to_string();
         let result = parse_ixbrl(&html);
 
@@ -48,15 +48,15 @@ fn test_all_fixtures_parse_successfully() {
         );
 
         // Basic sanity checks - all filings should have some data
-        assert!(xbrl.contexts.len() > 0, "{} should have contexts", name);
-        assert!(xbrl.facts.len() > 0, "{} should have facts", name);
+        assert!(!xbrl.contexts.is_empty(), "{} should have contexts", name);
+        assert!(!xbrl.facts.is_empty(), "{} should have facts", name);
     }
 }
 
 #[test]
 fn test_10q_variant_consistency() {
     // Parse all 10-Q variants
-    let fixtures = vec![
+    let fixtures = [
         ("10-Q Original", FORM_10Q_FIXTURE),
         ("10-Q Variant 1", FORM_10Q_1_FIXTURE),
         ("10-Q Variant 2", FORM_10Q_2_FIXTURE),
@@ -65,9 +65,9 @@ fn test_10q_variant_consistency() {
     let parsed: Vec<_> = fixtures
         .iter()
         .map(|(name, path)| {
-            let bytes = fs::read(path).expect(&format!("Failed to read {}", name));
+            let bytes = fs::read(path).unwrap_or_else(|_| panic!("Failed to read {}", name));
             let html = String::from_utf8_lossy(&bytes).to_string();
-            parse_ixbrl(&html).expect(&format!("Failed to parse {}", name))
+            parse_ixbrl(&html).unwrap_or_else(|_| panic!("Failed to parse {}", name))
         })
         .collect();
 
@@ -109,7 +109,7 @@ fn test_8k_specific_characteristics() {
     );
 
     // 8-K filings typically have fewer facts than 10-Q (they're event-driven)
-    assert!(xbrl.facts.len() > 0, "8-K should have some facts");
+    assert!(!xbrl.facts.is_empty(), "8-K should have some facts");
 
     // Should still have DEI information
     let doc_type = xbrl.facts.iter().find(|f| f.local_name == "DocumentType");
@@ -265,14 +265,14 @@ fn test_unit_measures() {
         .filter(|u| {
             u.measure
                 .as_ref()
-                .map_or(false, |m| m.contains("USD") || m.contains("iso4217"))
+                .is_some_and(|m| m.contains("USD") || m.contains("iso4217"))
         })
         .count();
 
     let share_units = xbrl
         .units
         .iter()
-        .filter(|u| u.measure.as_ref().map_or(false, |m| m.contains("shares")))
+        .filter(|u| u.measure.as_ref().is_some_and(|m| m.contains("shares")))
         .count();
 
     println!(
@@ -296,12 +296,10 @@ fn test_temporal_contexts_validity() {
             instant_count += 1;
         }
 
-        if context.period.start_date.is_some() && context.period.end_date.is_some() {
+        if let (Some(start), Some(end)) = (&context.period.start_date, &context.period.end_date) {
             duration_count += 1;
 
             // Duration periods should have start before end
-            let start = &context.period.start_date.as_ref().unwrap();
-            let end = &context.period.end_date.as_ref().unwrap();
 
             assert!(
                 start <= end,
@@ -369,9 +367,9 @@ fn test_nil_value_handling() {
     ];
 
     for (name, path) in fixtures {
-        let bytes = fs::read(path).expect(&format!("Failed to read {}", name));
+        let bytes = fs::read(path).unwrap_or_else(|_| panic!("Failed to read {}", name));
         let html = String::from_utf8_lossy(&bytes).to_string();
-        let xbrl = parse_ixbrl(&html).expect(&format!("Failed to parse {}", name));
+        let xbrl = parse_ixbrl(&html).unwrap_or_else(|_| panic!("Failed to parse {}", name));
 
         let nil_facts = xbrl
             .facts
@@ -452,7 +450,7 @@ fn test_fact_references_valid_units() {
         .filter(|f| {
             f.unit_ref
                 .as_ref()
-                .map_or(false, |u| valid_unit_ids.contains(u.as_str()))
+                .is_some_and(|u| valid_unit_ids.contains(u.as_str()))
         })
         .count();
 
@@ -489,11 +487,11 @@ fn test_parser_handles_malformed_html() {
 
     let xbrl = result.unwrap();
     assert!(
-        xbrl.contexts.len() > 0,
+        !xbrl.contexts.is_empty(),
         "Should extract contexts despite HTML issues"
     );
     assert!(
-        xbrl.facts.len() > 0,
+        !xbrl.facts.is_empty(),
         "Should extract facts despite HTML issues"
     );
 }
