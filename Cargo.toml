@@ -37,7 +37,7 @@ derive = ["dep:xbrlkit-derive"]
 taxonomies = ["derive"]
 
 [dependencies]
-quick-xml = { version = "0.37.5", features = ["serialize"] }
+quick-xml = { version = "0.41.0", features = ["serialize"] }
 regex = "1.11"
 serde = { version = "1.0", features = ["derive"] }
 thiserror = "2.0"
