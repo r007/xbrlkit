@@ -1,11 +1,17 @@
-//! # `#[derive(FromXbrl)]`
+//! `#[derive(FromXbrl)]` for [xbrlkit](https://docs.rs/xbrlkit).
 //!
 //! Binds the fields of a struct to XBRL concepts. The binding lives in
 //! `#[xbrl(..)]` attributes and nowhere else, so the struct's serde names stay
 //! its Rust names — which is what reaches JSON, Arrow and Parquet.
 //!
+//! Depend on `xbrlkit` and use the derive it re-exports; this crate is not
+//! meant to be used on its own, and the code it generates refers to
+//! `::xbrlkit`.
+//!
 //! ```ignore
-//! #[derive(Default, Serialize, Deserialize, FromXbrl)]
+//! use xbrlkit::FromXbrl;
+//!
+//! #[derive(Default, FromXbrl)]
 //! #[xbrl(instant)]
 //! pub struct BalanceSheet {
 //!     /// The date the figures are as of.
@@ -16,8 +22,8 @@
 //!     pub assets: Option<f64>,
 //!
 //!     /// The first concept the filing reports wins.
-//!     #[xbrl(concept = "us-gaap:AssetsHeldInTrustNoncurrent", alias = "us-gaap:AssetsHeldInTrust")]
-//!     pub assets_held_in_trust: Option<f64>,
+//!     #[xbrl(concept = "us-gaap:Liabilities", alias = "us-gaap:LiabilitiesNoncurrent")]
+//!     pub liabilities: Option<f64>,
 //! }
 //! ```
 //!
@@ -31,7 +37,8 @@
 //! | `period_start` / `period_end`        | the dates of the period the struct was read for          |
 //! | *(none)*                             | left at its `Default`                                    |
 //!
-//! What a `concept` field holds is decided by its type — see `xbrlkit::bind::FromFacts`.
+//! What a `concept` field holds is decided by its type — see
+//! `xbrlkit::bind::FromFacts`.
 //!
 //! ## Struct attributes
 //!
@@ -54,6 +61,7 @@ enum Binding {
     Unbound,
 }
 
+/// Derives `xbrlkit::FromXbrl` for a struct with named fields. See the crate docs.
 #[proc_macro_derive(FromXbrl, attributes(xbrl))]
 pub fn derive_from_xbrl(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);

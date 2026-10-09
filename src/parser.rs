@@ -1,27 +1,15 @@
-//! # High-Performance XBRL and iXBRL Parser
+//! # The parser
 //!
-//! Provides efficient, single-pass parsing of both traditional XBRL XML documents and modern
-//! iXBRL (Inline XBRL) HTML documents using event-driven processing. This module handles
-//! the low-level parsing and converts raw documents into structured data representations.
+//! Reads a filing into an [`Instance`]: every context, unit and fact it tags,
+//! in document order. One pass over the text, no DOM.
 //!
-//! ## Parsing Strategies
+//! An SEC filing carries its tagged data in one of two forms, and there is an
+//! entry point for each:
 //!
-//! This module supports two distinct XBRL formats:
+//! **Inline XBRL** — [`parse_ixbrl`]. The facts are tagged in place in the
+//! HTML a reader sees. Every 10-K, 10-Q and 8-K since 2019–2021 is filed this
+//! way.
 //!
-//! ### 1. Traditional XBRL (XML)
-//!
-//! Pure XML documents with clear structure:
-//! ```xml
-//! <xbrl xmlns="http://www.xbrl.org/2003/instance">
-//!   <context id="c1">...</context>
-//!   <unit id="usd">...</unit>
-//!   <us-gaap:Assets contextRef="c1" unitRef="usd">1000000</us-gaap:Assets>
-//! </xbrl>
-//! ```
-//!
-//! ### 2. iXBRL (Inline XBRL in HTML) - **Primary Format**
-//!
-//! HTML documents with embedded XBRL data tags:
 //! ```html
 //! <html xmlns:ix="http://www.xbrl.org/2013/inlineXBRL">
 //!   <ix:header>
@@ -29,65 +17,60 @@
 //!     <xbrli:unit id="usd">...</xbrli:unit>
 //!   </ix:header>
 //!   <body>
-//!     Total assets: <ix:nonfraction name="us-gaap:Assets"
-//!                    contextref="c1" unitref="usd" format="ixt:num-dot-decimal">1,000,000</ix:nonfraction>
+//!     Total assets: <ix:nonFraction name="us-gaap:Assets" contextRef="c1" unitRef="usd"
+//!                    scale="6" format="ixt:num-dot-decimal">359,241</ix:nonFraction>
 //!   </body>
 //! </html>
 //! ```
 //!
-//! ## Transformation Layer Integration
+//! **A traditional instance** — [`parse_xml`]. A separate XML document where
+//! each fact is an element named for its concept. Older filings attach one as
+//! an exhibit, and EDGAR extracts one (`*_htm.xml`) from every inline filing.
 //!
-//! The parser automatically captures `format` attributes from iXBRL tags and applies
-//! transformations before storing fact values. This ensures that deserialization
-//! receives normalized values:
-//!
-//! - `format="ixt:num-dot-decimal"` → removes comma separators
-//! - `format="ixt-sec:boolballotbox"` → converts checkboxes to booleans
-//! - `format="ixt-sec:numwordsen"` → converts English words to numbers
-//!
-//! See the `transformations` module for complete transformation documentation.
-//!
-//! ## Architecture
-//!
-//! ```text
-//!   iXBRL HTML Document (Primary)      Traditional XBRL XML (Fallback)
-//!            │                                     │
-//!            ▼                                     ▼
-//!   ┌─────────────────────┐           ┌─────────────────────┐
-//!   │ parse_ixbrl  │           │ parse_xml   │
-//!   │  (HTML-aware)       │           │   (XML-only)        │
-//!   └─────────────────────┘           └─────────────────────┘
-//!            │                                     │
-//!            └──────────────┬──────────────────────┘
-//!                           ▼
-//!                  ┌─────────────────┐
-//!                  │  Instance Structure │  <- Unified representation
-//!                  │ (contexts, units│
-//!                  │     facts)      │
-//!                  └─────────────────┘
-//!                           │
-//!                           ▼
-//!                  ┌─────────────────┐
-//!                  │ Document │  <- Queryable interface
-//!                  │  (serde_xbrl)   │
-//!                  └─────────────────┘
+//! ```xml
+//! <xbrl xmlns="http://www.xbrl.org/2003/instance">
+//!   <context id="c1">...</context>
+//!   <unit id="usd">...</unit>
+//!   <us-gaap:Assets contextRef="c1" unitRef="usd" decimals="-6">359241000000</us-gaap:Assets>
+//! </xbrl>
 //! ```
 //!
-//! ## Usage Example
+//! [`is_xml_instance`] tells the two apart, and
+//! [`Document::parse`](crate::Document::parse) uses it to pick.
 //!
-//! ```rust,no_run
-//! use xbrlkit::parser::{parse_ixbrl, parse_xml};
+//! ## What an inline value is
 //!
-//! // Primary approach: Try iXBRL first
-//! let content = std::fs::read_to_string("filing.html").unwrap();
-//! let xbrl = parse_ixbrl(&content)
-//!     .or_else(|_| {
-//!         // Fallback: Try traditional XBRL XML
-//!         parse_xml(&content)
-//!     })
-//!     .expect("Failed to parse either iXBRL or XBRL");
+//! The text between an inline fact's tags is what the filing *shows*; the
+//! value is what that text *means*. The parser closes the gap:
 //!
-//! println!("Parsed {} facts", xbrl.facts.len());
+//! - the value is the text of everything inside the tag, whatever HTML wraps
+//!   it, with `ix:exclude` left out and any `ix:continuation` appended
+//! - the `format` [transformation](crate::transformations) is applied:
+//!   `1,234` becomes `1234`, `September 30, 2025` becomes `2025-09-30`
+//! - `scale` moves the decimal point, exactly: `1,234` at scale 3 is `1234000`
+//! - `sign="-"` makes it negative, which is the only place the sign of a
+//!   figure printed as `(1,234)` lives
+//! - facts nested inside another fact — every figure in a note that is itself
+//!   tagged as a text block — are facts too
+//!
+//! ## Leniency
+//!
+//! Filings are produced by many tools and checked by none of them for
+//! well-formed HTML. Mismatched and unclosed tags, unknown entities and
+//! inconsistent attribute case (`contextRef`, `contextref`) are all read
+//! through. A context or unit that cannot be understood is skipped rather
+//! than failing the document.
+//!
+//! ```no_run
+//! use xbrlkit::parser::{is_xml_instance, parse_ixbrl, parse_xml};
+//!
+//! let content = std::fs::read_to_string("filing.htm")?;
+//! let instance = match is_xml_instance(&content) {
+//!     true => parse_xml(&content)?,
+//!     false => parse_ixbrl(&content)?,
+//! };
+//! println!("{} facts in {} contexts", instance.facts.len(), instance.contexts.len());
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
 use crate::error::{Result, XbrlError};
@@ -101,20 +84,8 @@ use quick_xml::{
 use std::borrow::Cow;
 use std::collections::HashMap;
 
-/// Checks if a tag name represents an XBRL root element
-///
-/// This function handles various namespace prefixes that might be used
-/// for the XBRL root element, making the parser more flexible.
-///
-/// # Arguments
-///
-/// * `tag_name` - The XML tag name to check
-///
-/// # Returns
-///
-/// `true` if the tag name represents an XBRL root element
+/// Whether a tag is the root of an instance: `xbrl`, under any prefix.
 fn is_xbrl_root_element(tag_name: &str) -> bool {
-    // Accept various namespace prefixes for the XBRL root element
     tag_name == "xbrl" || tag_name.ends_with(":xbrl")
 }
 
@@ -164,50 +135,27 @@ fn has_id_attribute(e: &BytesStart) -> bool {
         .any(|attr| attr.key.as_ref().eq_ignore_ascii_case(b"id"))
 }
 
-/// Parses an XBRL document using a single-pass, event-driven approach
+/// Parses a traditional XBRL instance document.
 ///
-/// This function serves as the primary entry point for XBRL parsing. It processes
-/// the entire document in a single pass, extracting contexts, units, and facts
-/// while maintaining minimal memory overhead.
+/// Fails with [`XbrlError::NotXbrl`] when the document has no `<xbrl>` root,
+/// and with [`XbrlError::Malformed`] when its XML cannot be read.
 ///
-/// # Arguments
-///
-/// * `xml_content` - The raw XBRL document content as a string
-///
-/// # Returns
-///
-/// * `Result<Instance>` - Parsed XBRL structure or parsing error
-///
-/// # Errors
-///
-/// Returns `XbrlError` for various parsing failures:
-/// - `ParsingError`: Malformed XML structure
-/// - `DeserializationError`: Missing required XBRL root element
-/// - `IoError`: Issues reading the document content
-///
-/// # Example
-///
-/// ```rust
+/// ```
 /// use xbrlkit::parser::parse_xml;
 ///
-/// let content = r#"
-/// <?xml version="1.0" encoding="utf-8"?>
-/// <xbrl xmlns="http://www.xbrl.org/2003/instance">
-///     <context id="c0">
-///         <entity>
-///             <identifier scheme="http://www.sec.gov/CIK">0001234567</identifier>
-///         </entity>
-///         <period>
-///             <instant>2021-03-31</instant>
-///         </period>
-///     </context>
-/// </xbrl>
-/// "#;
+/// let instance = parse_xml(r#"<?xml version="1.0" encoding="utf-8"?>
+///     <xbrl xmlns="http://www.xbrl.org/2003/instance" xmlns:dei="http://xbrl.sec.gov/dei/2025">
+///       <context id="c0">
+///         <entity><identifier scheme="http://www.sec.gov/CIK">0001234567</identifier></entity>
+///         <period><instant>2025-03-31</instant></period>
+///       </context>
+///       <dei:EntityRegistrantName contextRef="c0">Example Corp</dei:EntityRegistrantName>
+///     </xbrl>"#)?;
 ///
-/// let xbrl_data = parse_xml(content).unwrap();
-/// println!("Extracted {} facts from {} contexts",
-///          xbrl_data.facts.len(),
-///          xbrl_data.contexts.len());
+/// assert_eq!(instance.contexts.len(), 1);
+/// assert_eq!(instance.facts[0].full_name, "dei:EntityRegistrantName");
+/// assert_eq!(instance.facts[0].value.as_str(), Some("Example Corp"));
+/// # Ok::<(), xbrlkit::XbrlError>(())
 /// ```
 pub fn parse_xml(xml_content: &str) -> Result<Instance> {
     let mut reader = Reader::from_str(xml_content);
@@ -253,65 +201,30 @@ pub fn parse_xml(xml_content: &str) -> Result<Instance> {
     }
 }
 
-/// Parses an iXBRL (Inline XBRL) HTML document using a resilient, single-pass approach
+/// Parses an inline XBRL document: a filing's HTML with the facts tagged in
+/// place.
 ///
-/// This function serves as the primary entry point for parsing iXBRL filings, which are
-/// SEC HTML documents with embedded XBRL data. It handles real-world SEC filings that
-/// often contain malformed HTML and uses robust error recovery strategies.
+/// See the [module documentation](self) for what becomes of an inline fact's
+/// text. Fails only when the markup cannot be read at all; a document that
+/// tags nothing parses to an empty [`Instance`].
 ///
-/// # iXBRL Structure
-///
-/// iXBRL documents contain:
-/// - `<ix:header>` with contexts (`<xbrli:context>`) and units (`<xbrli:unit>`)
-/// - Inline facts using tags like `<ix:nonfraction>`, `<ix:nonnumeric>`, etc.
-/// - Facts embedded directly in the HTML presentation layer
-///
-/// # Arguments
-///
-/// * `html_content` - The raw HTML content containing inline XBRL data
-///
-/// # Returns
-///
-/// * `Result<Instance>` - Parsed XBRL structure with facts, contexts, and units
-///
-/// # Errors
-///
-/// Returns `XbrlError` for critical parsing failures. However, the parser is designed
-/// to be resilient and will:
-/// - Skip malformed HTML tags (using `check_end_names = false`)
-/// - Handle unknown HTML entities gracefully (falls back to raw text)
-/// - Continue processing even if individual elements fail to parse
-///
-/// # Example
-///
-/// ```rust,no_run
+/// ```
 /// use xbrlkit::parser::parse_ixbrl;
 ///
-/// let html = std::fs::read_to_string("10-q.html").unwrap();
-/// let xbrl_data = parse_ixbrl(&html).unwrap();
-/// println!("Extracted {} facts from {} contexts",
-///          xbrl_data.facts.len(),
-///          xbrl_data.contexts.len());
+/// let instance = parse_ixbrl(r#"<html xmlns:ix="http://www.xbrl.org/2013/inlineXBRL"><body>
+///     Net loss of $(<ix:nonFraction name="us-gaap:NetIncomeLoss" contextRef="c1" unitRef="usd"
+///         scale="3" sign="-" format="ixt:num-dot-decimal">1,234</ix:nonFraction>) thousand
+///     </body></html>"#)?;
+///
+/// assert_eq!(instance.facts[0].value.as_str(), Some("-1234000"));
+/// # Ok::<(), xbrlkit::XbrlError>(())
 /// ```
-///
-/// # Notes
-///
-/// - This parser prioritizes robustness over strict validation
-/// - Designed specifically for SEC EDGAR iXBRL filings
-/// - Handles both uppercase and lowercase tag variations (e.g., `contextref` and `contextRef`)
-/// - Applies `scale` and `sign` to numeric values, so a loss printed as
-///   `(1,234)` in thousands is the value `-1234000`
-/// - A fact's value is the text of everything inside it, whatever HTML wraps
-///   it, and continues through any `ix:continuation` it points at
-/// - Facts nested inside another fact (every figure in a note that is tagged
-///   as a text block) are extracted alongside it
 pub fn parse_ixbrl(html_content: &str) -> Result<Instance> {
     let mut reader = Reader::from_str(html_content);
     reader.config_mut().trim_text(true);
     reader.config_mut().expand_empty_elements = true;
-    // Allow malformed HTML - important for handling real-world SEC filings
+    // Filings are HTML, not XML: tags close out of order, or never.
     reader.config_mut().check_end_names = false;
-    // Skip unknown HTML entities like &nbsp; instead of erroring
     reader.config_mut().allow_unmatched_ends = true;
 
     let mut xbrl = Instance::default();
@@ -468,7 +381,7 @@ fn attribute(e: &BytesStart, lowercase_name: &str) -> Option<String> {
 ///
 /// The value of an inline fact is the text of *all* its descendants, whatever
 /// HTML wraps them. A registrant's name is tagged as
-/// `<ix:nonNumeric ...><b>NEWCOURT ACQUISITION CORP</b></ix:nonNumeric>`, and a
+/// `<ix:nonNumeric ...><b>EXAMPLE HOLDINGS INC</b></ix:nonNumeric>`, and a
 /// text block wraps whole pages of `<p>` and `<table>`. Only `ix:exclude` is
 /// left out, which is how a filer keeps page headers out of a text block.
 ///
@@ -484,7 +397,7 @@ fn attribute(e: &BytesStart, lowercase_name: &str) -> Option<String> {
 ///
 /// <!-- a note, tagged as a text block, holding the figures it discusses -->
 /// <ix:nonNumeric name="us-gaap:StockholdersEquityNoteDisclosureTextBlock" escape="true">
-///     <p>... at an exercise price of $<ix:nonFraction name="us-gaap:ClassOfWarrant...">11.50</ix:nonFraction> ...</p>
+///     <p>... par value of $<ix:nonFraction name="us-gaap:CommonStockParOrStatedValuePerShare">0.0001</ix:nonFraction> ...</p>
 /// </ix:nonNumeric>
 /// ```
 ///
@@ -728,34 +641,13 @@ fn negate(value: String) -> String {
     if is_zero { value } else { format!("-{value}") }
 }
 
-/// A generic, unified event processing loop for both XBRL and iXBRL
+/// The event loop both entry points share.
 ///
-/// This function iterates through XML events and dispatches them to the appropriate
-/// handlers. It takes a `should_break` closure to define the termination condition,
-/// allowing it to be used for both full-document (iXBRL) and sub-tree (XML) parsing.
-///
-/// # Architecture
-///
-/// This function achieves perfect architectural symmetry between XBRL and iXBRL parsing:
-///
-/// - **XBRL (XML)**: Processes events until the closing `</xbrl>` tag
-/// - **iXBRL (HTML)**: Processes events until `Event::Eof` (end of file)
-///
-/// Both formats share the same event dispatching logic:
-/// 1. Check for metadata tags (context, unit) or link tags
-/// 2. Check for iXBRL fact tags (ix:nonfraction, ix:fraction, ix:nonnumeric)
-/// 3. Fall back to traditional XBRL fact handling for other start tags
-/// 4. Handle empty (self-closing) tags as nil facts
-///
-/// # Arguments
-///
-/// * `reader` - Mutable reference to the XML reader
-/// * `xbrl` - Mutable reference to the XBRL structure being built
-/// * `should_break` - A closure that takes an `Event` and returns `true` to stop processing
-///
-/// # Returns
-///
-/// * `Result<()>` - Success or parsing error
+/// Dispatches each start tag in turn: a context or unit, an inline fact or
+/// continuation, or — for anything else with a namespace prefix — a fact of a
+/// traditional instance. `should_break` ends the loop: at `</xbrl>` for an
+/// instance, at the end of the file for an inline document. In an
+/// `inline_document`, a prefixed tag is only a fact if it names its context.
 fn process_events<F>(
     reader: &mut Reader<&[u8]>,
     xbrl: &mut Instance,
@@ -833,20 +725,16 @@ where
     Ok(())
 }
 
-/// Handles XML start tags with content `<tag>...</tag>`
-///
-/// This function is now simplified. It no longer needs to check for metadata,
-/// as that is handled by the caller (`process_events`). It only processes facts.
+/// Reads a fact of a traditional instance: an element named for its concept.
 fn handle_start_event(
     reader: &mut Reader<&[u8]>,
     xbrl: &mut Instance,
     e: BytesStart,
     tag_name: String,
 ) -> Result<()> {
-    // Use the unified attribute parser
     let (mut fact, attrs) = parse_fact_attributes_common(&e, false);
     let is_explicitly_nil = attrs.is_nil;
-    // For XML, the concept name IS the tag name
+    // In an instance the concept is the tag name.
     fact.local_name = local_part(&tag_name).to_string();
     fact.full_name = tag_name;
 
@@ -889,38 +777,15 @@ fn handle_start_event(
     Ok(())
 }
 
-/// Handles XML empty (self-closing) tags `<tag .../>`
-///
-/// This function processes XML elements that have no content and are self-closing.
-/// In XBRL, empty elements typically represent nil values (e.g., missing data points).
-///
-/// # Processing Strategy
-///
-/// - **Link Elements**: Skipped entirely (not needed for financial data)
-/// - **RawFact Elements**: Treated as nil values with only attribute data preserved
-///
-/// # Arguments
-///
-/// * `xbrl` - Mutable reference to the XBRL structure
-/// * `e` - The self-closing tag event containing attributes
-/// * `tag_name` - The tag name as a string
-///
-/// # Example
-///
-/// ```xml
-/// <us-gaap:PreferredStockValue contextRef="c1" unitRef="usd" xsi:nil="true"/>
-/// ```
-///
-/// This would be parsed as a fact with `XbrlValue::Nil`.
+/// Reads a self-closing element as a fact with no value:
+/// `<us-gaap:PreferredStockValue contextRef="c1" unitRef="usd" xsi:nil="true"/>`.
 fn handle_empty_event(xbrl: &mut Instance, e: BytesStart, tag_name: String) {
     // Skip link elements
     if tag_name.starts_with("link:") {
         return;
     }
 
-    // Use the unified attribute parser
     let (mut fact, _) = parse_fact_attributes_common(&e, false);
-    // For XML, the concept name IS the tag name
     fact.local_name = local_part(&tag_name).to_string();
     fact.full_name = tag_name;
     fact.value = XbrlValue::Nil; // Empty elements are considered nil
@@ -928,19 +793,7 @@ fn handle_empty_event(xbrl: &mut Instance, e: BytesStart, tag_name: String) {
     xbrl.facts.push(fact);
 }
 
-/// Converts a string value to a basic XbrlValue.
-///
-/// This function no longer performs aggressive type inference. It simply
-/// trims the string and wraps it in the XbrlValue::String variant. Empty or
-/// whitespace-only strings are considered Nil.
-///
-/// # Arguments
-///
-/// * `value_str` - The raw string value from XML content
-///
-/// # Returns
-///
-/// * `XbrlValue` - A simple, untyped value representation.
+/// The text of an instance fact as a value: trimmed, and nil when empty.
 fn parse_typed_value(value_str: &str) -> XbrlValue {
     let trimmed_val = value_str.trim();
     if trimmed_val.is_empty() {
@@ -950,33 +803,8 @@ fn parse_typed_value(value_str: &str) -> XbrlValue {
     }
 }
 
-/// Reconstructs the complete XML string for a complex element
-///
-/// This function is used for context and unit elements that require
-/// full XML structure preservation for proper serde deserialization.
-/// It captures the complete element including all nested children.
-///
-/// # Processing Strategy
-///
-/// 1. Write the opening tag with all attributes
-/// 2. Copy all child content maintaining proper nesting
-/// 3. Write the closing tag
-/// 4. Return complete XML string for serde processing
-///
-/// # Arguments
-///
-/// * `reader` - Mutable reference to the XML reader
-/// * `start_event` - The opening tag event
-/// * `tag_name` - Name of the tag being reconstructed
-///
-/// # Returns
-///
-/// * `Result<String>` - Complete XML string or parsing error
-///
-/// # Errors
-///
-/// Returns `XbrlError::DeserializationError` if the element is not properly closed
-/// or if XML reconstruction fails.
+/// Copies an element and everything in it back out as a string, for serde to
+/// read a context or a unit from. Consumes through the element's end tag.
 fn reconstruct_element(
     reader: &mut Reader<&[u8]>,
     start_event: &BytesStart,
@@ -1030,55 +858,11 @@ fn reconstruct_element(
     String::from_utf8(xml_bytes).map_err(XbrlError::malformed)
 }
 
-/// Unified handler for metadata (context, unit) and link elements
+/// Reads a context or a unit, or skips a `link:` element (a schema or
+/// linkbase reference, which this crate does not follow). Returns whether the
+/// tag was one of these.
 ///
-/// This function centralizes the logic for parsing complex elements that are
-/// common to both traditional XBRL and iXBRL formats. It handles case-insensitive
-/// tag matching and uses serde deserialization for structured elements.
-///
-/// # Element Types Handled
-///
-/// ## 1. Context Elements (`*:context`)
-/// Defines the circumstances under which a fact applies:
-/// - Entity identification (CIK, ticker)
-/// - Time period (instant or duration)
-/// - Dimensional segments
-///
-/// ## 2. Unit Elements (`*:unit`)
-/// Defines measurement units for numeric facts:
-/// - Simple measures (e.g., "iso4217:USD", "xbrli:shares")
-/// - Divide units (e.g., "USD/shares" for per-share calculations)
-///
-/// ## 3. Link Elements (`link:*`)
-/// XBRL linkbase references that are skipped:
-/// - Presentation links (visual hierarchy)
-/// - Calculation links (formulas)
-/// - Definition links (relationships)
-///
-/// # Case Sensitivity
-///
-/// The function uses case-insensitive matching to handle variations:
-/// - `xbrli:context` and `xbrli:Context` both match
-/// - `xbrli:unit` and `XBRLI:UNIT` both match
-///
-/// # Arguments
-///
-/// * `reader` - Mutable reference to the XML reader for content extraction
-/// * `xbrl` - Mutable reference to the XBRL structure for storing parsed elements
-/// * `e` - The start tag event containing attributes
-/// * `tag_name` - The tag name as a string (with namespace prefix)
-///
-/// # Returns
-///
-/// * `Result<bool>` - Returns:
-///   - `Ok(true)` if the element was handled (context, unit, or link)
-///   - `Ok(false)` if the element was not recognized, indicating the caller should process it
-///
-/// # Error Handling
-///
-/// If context or unit deserialization fails, the element is silently skipped
-/// rather than causing the entire parse to fail. This provides resilience
-/// against malformed metadata that doesn't affect fact extraction.
+/// A context or unit serde cannot make sense of is dropped, not fatal.
 fn try_handle_metadata_or_link(
     reader: &mut Reader<&[u8]>,
     xbrl: &mut Instance,
@@ -1119,64 +903,12 @@ fn try_handle_metadata_or_link(
     }
 }
 
-/// Unified, case-insensitive attribute parser for both XBRL and iXBRL facts
+/// Reads the attributes of a fact element, ignoring their case: filings
+/// write `contextRef` and `contextref` both.
 ///
-/// This function centralizes attribute extraction logic, handling case variations
-/// and format-specific differences between traditional XBRL and inline XBRL (iXBRL).
-/// It implements the DRY principle by eliminating duplicate attribute parsing code.
-///
-/// # Attribute Handling
-///
-/// ## Common Attributes (both formats)
-/// - **contextRef/contextref**: Reference to a context ID (case-insensitive)
-/// - **unitRef/unitref**: Reference to a unit ID (case-insensitive)
-/// - **decimals**: Precision indicator for numeric values
-/// - **id**: Unique identifier for this fact instance
-/// - **xsi:nil/nil**: Indicates an explicit nil value
-///
-/// ## iXBRL-Specific Attributes (`is_ixbrl = true`)
-/// - **name**: Full concept name (e.g., "us-gaap:Cash")
-/// - **scale**: Power of 10 multiplier for numeric values (e.g., scale="-3" for thousands)
-///
-/// ## Traditional XBRL Notes
-/// In traditional XBRL, the concept name comes from the tag name itself, not from
-/// a "name" attribute, so it must be set by the caller.
-///
-/// # Case Insensitivity
-///
-/// The parser converts all attribute keys to lowercase before matching, allowing it
-/// to handle SEC filings that use inconsistent casing:
-/// - `contextRef`, `contextref`, `ContextRef` all match
-/// - `unitRef`, `unitref`, `UnitRef` all match
-///
-/// # Arguments
-///
-/// * `e` - The start tag event containing the attributes to parse
-/// * `is_ixbrl` - Boolean flag indicating iXBRL format (enables format-specific processing)
-///
-/// # Returns
-///
-/// Returns the partially populated [`RawFact`] and the [`FactAttrs`] that shape
-/// its value: nil, and for iXBRL `scale`, `sign`, `continuedAt` and `escape`.
-///
-/// # Example Usage
-///
-/// ```rust,ignore
-/// // For iXBRL facts
-/// let (fact, attrs) = parse_fact_attributes_common(&start_tag, true);
-/// // fact.full_name is set from "name" attribute
-///
-/// // For traditional XBRL facts
-/// let (mut fact, attrs) = parse_fact_attributes_common(&start_tag, false);
-/// fact.full_name = tag_name; // Caller must set the concept name from tag
-/// ```
-///
-/// # Nil Handling
-///
-/// When `xsi:nil="true"` or `nil="true"` is encountered:
-/// - `fact.value` is immediately set to `XbrlValue::Nil`
-/// - `FactAttrs::is_nil` is returned as `true`
-/// - Callers should skip content extraction for nil facts
+/// Returns the fact, without its value, and the [`FactAttrs`] that will
+/// shape that value. For an inline fact (`is_ixbrl`) the concept is the
+/// `name` attribute; for an instance fact it is the tag, set by the caller.
 fn parse_fact_attributes_common(e: &BytesStart, is_ixbrl: bool) -> (RawFact, FactAttrs) {
     let mut fact = RawFact::default();
     let mut attrs = FactAttrs::default();

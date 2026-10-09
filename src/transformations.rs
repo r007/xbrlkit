@@ -1,46 +1,80 @@
-//! # iXBRL Transformation Registry
+//! # Inline XBRL transformations
 //!
-//! Handles the normalization of iXBRL fact values based on the `format` attribute.
-//! This implements various transformation registries, including the SEC-specific one.
+//! An inline fact is tagged around the text a reader sees — `1,234`,
+//! `September 30, 2025`, `☒`, `five years` — and its `format` attribute names
+//! the rule that turns that text into the value: `1234`, `2025-09-30`, `true`,
+//! `P5Y`. The parser applies these as it reads, so by the time a fact reaches
+//! a struct its value is already normalised.
 //!
-//! ## Supported Transformations
+//! [`apply_transformation`] is the entry point. It knows two registries:
 //!
-//! ### SEC-Specific (ixt-sec namespace)
-//! - `boolballotbox`: Converts checkbox characters (☐☑☒) to boolean strings
-//! - `numwordsen`: Converts English number words to numeric strings
-//! - `durwordsen`: Converts English duration words to ISO 8601 duration format
-//! - `durday`: Converts day counts to ISO 8601 duration (e.g., "30" → "P30D")
-//! - `durmonth`: Converts month counts to ISO 8601 duration (e.g., "12" → "P12M")
-//! - `exchnameen`: Normalizes exchange names to standard codes (NYSE, NASDAQ)
-//! - `stateprovnameen`: Converts US state/province names to 2-letter codes
-//! - `entityfilercategoryen`: Normalizes entity filer categories
-//! - `edgarprovcountryen`: Normalizes EDGAR province/country names
+//! ## The SEC's (`ixt-sec:`)
 //!
-//! ### Standard (ixt namespace)
-//! - `num-dot-decimal` / `numdotdecimal`: Removes comma thousands separators from numbers
-//! - `zerodash` / `zero-dash`: Converts dash character to zero for numeric fields  
-//! - `fixed-true/false/zero`: Returns fixed boolean or numeric values
-//! - `booleanfalse/true`: Returns boolean strings
-//! - `date-monthname-day-year-en` / `datemonthdayyearen`: Converts "Month Day, Year" to ISO 8601
+//! | Format                                   | Example                                   |
+//! | ---------------------------------------- | ----------------------------------------- |
+//! | `boolballotbox`, `yesnoballotbox`        | `☒` → `true` / `Yes`                      |
+//! | `numwordsen`                             | `seventy thousand` → `70000`              |
+//! | `durwordsen`                             | `five years, two months` → `P5Y2M`        |
+//! | `duryear`, `durmonth`, `durweek`, `durday`, `durhour` | `2.5` → `P2Y6M`              |
+//! | `datequarterend`                         | `Q3 2025` → `2025-09-30`                  |
+//! | `exchnameen`                             | `The Nasdaq Stock Market LLC` → `NASDAQ`  |
+//! | `stateprovnameen`                        | `Delaware` → `DE`                         |
+//! | `countrynameen`                          | `Grand Duchy of Luxembourg` → `LU`        |
+//! | `entityfilercategoryen`                  | `non accelerated filer` → `Non-accelerated Filer` |
+//! | `edgarprovcountryen`                     | `CAYMAN ISLANDS` → `Cayman Islands`       |
+//! | `numinf`, `numneginf`, `numnan`          | → `INF`, `-INF`, `NaN`                    |
 //!
-//! See: https://www.xbrl.org/specification/inlinexbrl-transformation-rules-registry-4/
+//! `edgarprovcountryen` normalises capitalisation only: it does not map a
+//! name to EDGAR's two-character state and country code.
+//!
+//! ## The Transformation Rules Registry (`ixt:`)
+//!
+//! Both the hyphenated names of registry versions 4 and 5 and the run-together
+//! names of versions 1 to 3 are accepted: `num-dot-decimal` and
+//! `numdotdecimal` are the same rule.
+//!
+//! | Format                                                   | Example                          |
+//! | -------------------------------------------------------- | -------------------------------- |
+//! | `num-dot-decimal`, `num-dot-decimal-in`, `…-apos`        | `1,234.5` → `1234.5`             |
+//! | `num-comma-decimal`, `…-apos`                            | `1.234,5` → `1234.5`             |
+//! | `num-unit-decimal`                                       | `3 dollars 50 cents` → `3.50`    |
+//! | `zero-dash`, `fixed-zero`                                | `—` → `0`                        |
+//! | `fixed-true`, `fixed-false`, `fixed-empty`               | → `true`, `false`, nothing       |
+//! | `date-monthname-day-year-en`, `date-day-monthname-year-en` | `Sept. 30, 2025` → `2025-09-30` |
+//! | `date-month-day-year`, `date-day-month-year`, `date-year-month-day` | `9/30/25` → `2025-09-30` |
+//! | `date-monthname-day-en`, `date-day-monthname-en`, `date-month-day`, `date-day-month` | `December 31` → `--12-31` |
+//! | `date-monthname-year-en`, `date-year-monthname-en`, `date-month-year`, `date-year-month` | `June 2027` → `2027-06` |
+//!
+//! Only the English date rules are implemented; the registry's other
+//! languages and calendars are not.
+//!
+//! ## When a rule does not apply
+//!
+//! A format this module does not know, or text a rule cannot read, leaves the
+//! value as the text the filing shows. The parser never fails a document over
+//! one fact.
+//!
+//! See the [Transformation Rules Registry] and the [EDGAR Filer Manual].
+//!
+//! [Transformation Rules Registry]: https://www.xbrl.org/specification/inlinexbrl-transformation-rules-registry-4/
+//! [EDGAR Filer Manual]: https://www.sec.gov/edgar/filer-manual
 
 use regex::Regex;
 use std::collections::HashMap;
 use std::sync::LazyLock as Lazy;
 
-// A transformation is a function that takes a string slice and returns a normalized String.
+/// A rule: the text the filing shows in, the normalised value out.
 type Transformation = fn(&str) -> Result<String, TransformationError>;
 
-// The registry is a map from a format name (e.g., "numwordsen") to a transformation function.
-pub type TransformationRegistry = HashMap<&'static str, Transformation>;
+/// Rules by local name, e.g. `numwordsen`.
+type TransformationRegistry = HashMap<&'static str, Transformation>;
 
+/// Why a transformation produced no value.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum TransformationError {
-    #[error("Transformation '{0}' not implemented for registry '{1}'")]
-    NotImplemented(String, String),
-
-    #[error("Invalid input value '{0}' for transformation '{1}'")]
+    /// The text is not something the rule can read: the value, then the rule.
+    #[error("cannot read {0:?} as {1}")]
     InvalidInput(String, String),
 }
 
@@ -283,13 +317,54 @@ fn parse_word_or_num(s: &str) -> Result<i64, TransformationError> {
     }
 }
 
-/// Removes comma thousands separators from numbers
+/// A number with `.` for the decimal point: drops the thousands separators,
+/// whether commas, spaces or apostrophes.
 ///
 /// ## Examples
 /// - "1,000,000" → "1000000"
 /// - "123,456.789" → "123456.789"
+/// - "1 234.5" → "1234.5"
 pub fn num_dot_decimal(value: &str) -> Result<String, TransformationError> {
-    Ok(value.replace(',', ""))
+    Ok(value
+        .chars()
+        .filter(|c| !is_group_separator(*c) && *c != ',')
+        .collect())
+}
+
+/// A number with `,` for the decimal point, as most of Europe writes it.
+///
+/// ## Examples
+/// - "1.234,56" → "1234.56"
+/// - "1 234,5" → "1234.5"
+pub fn num_comma_decimal(value: &str) -> Result<String, TransformationError> {
+    Ok(value
+        .chars()
+        .filter(|c| !is_group_separator(*c) && *c != '.')
+        .map(|c| if c == ',' { '.' } else { c })
+        .collect())
+}
+
+/// A number written as whole units and a fraction of one, each with its
+/// name: the text between the two numbers is the decimal point.
+///
+/// ## Examples
+/// - "3 dollars 50 cents" → "3.50"
+/// - "1,234 dollars and 5 cents" → "1234.05"
+pub fn num_unit_decimal(value: &str) -> Result<String, TransformationError> {
+    static UNIT_DECIMAL: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"^\s*([0-9][0-9.,]*)[^0-9.,][^0-9]*([0-9]{1,2})[^0-9]*$").unwrap()
+    });
+    let caps = UNIT_DECIMAL.captures(value).ok_or_else(|| {
+        TransformationError::InvalidInput(value.to_string(), "num-unit-decimal".to_string())
+    })?;
+    let whole: String = caps[1].chars().filter(char::is_ascii_digit).collect();
+    Ok(format!("{whole}.{:0>2}", &caps[2]))
+}
+
+/// What separates groups of digits besides the comma or the point: spaces of
+/// any width, and the apostrophes of Swiss notation.
+fn is_group_separator(c: char) -> bool {
+    c.is_whitespace() || matches!(c, '\'' | '’' | '`' | '´')
 }
 
 /// Returns the fixed value "false" regardless of input
@@ -305,6 +380,11 @@ pub fn fixed_true(_value: &str) -> Result<String, TransformationError> {
 /// Returns the fixed value "0" regardless of input
 pub fn fixed_zero(_value: &str) -> Result<String, TransformationError> {
     Ok("0".to_string())
+}
+
+/// Returns nothing regardless of input: the fact is reported with no value.
+pub fn fixed_empty(_value: &str) -> Result<String, TransformationError> {
+    Ok(String::new())
 }
 
 /// Returns "false" (boolean false)
@@ -471,61 +551,134 @@ pub fn exchnameen(value: &str) -> Result<String, TransformationError> {
     ))
 }
 
-/// Converts date in "Month Day, Year" format to ISO 8601 (YYYY-MM-DD)
+/// One piece of a written date, in the order a format expects them.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum DatePart {
+    Day,
+    /// A month as a number.
+    Month,
+    /// A month by its English name or abbreviation.
+    MonthName,
+    Year,
+}
+
+/// `"sept"` → `9`. Takes the full name or any abbreviation of three letters
+/// or more, in any case.
+fn month_number(name: &str) -> Option<u32> {
+    const MONTHS: [&str; 12] = [
+        "january",
+        "february",
+        "march",
+        "april",
+        "may",
+        "june",
+        "july",
+        "august",
+        "september",
+        "october",
+        "november",
+        "december",
+    ];
+    let name = name.to_ascii_lowercase();
+    if name.len() < 3 {
+        return None;
+    }
+    let month = MONTHS.iter().position(|month| month.starts_with(&name))?;
+    Some(month as u32 + 1)
+}
+
+fn days_in_month(month: u32, year: Option<u32>) -> u32 {
+    match month {
+        4 | 6 | 9 | 11 => 30,
+        // Without a year, the day a leap year has is a day the month can have.
+        2 => match year {
+            Some(y) if !(y % 4 == 0 && (y % 100 != 0 || y % 400 == 0)) => 28,
+            _ => 29,
+        },
+        _ => 31,
+    }
+}
+
+/// Reads a date written as `parts`, whatever separates them — `9/30/2025`,
+/// `30.09.25`, `Sept. 30, 2025`, `30th of September 2025` — into the XML
+/// Schema form of what it holds: `2025-09-30` for a full date, `--09-30` for
+/// a month and day, `2025-09` for a month and year.
+///
+/// A two-digit year is in this century, as the registry has it.
+fn read_date(value: &str, format: &str, parts: &[DatePart]) -> Result<String, TransformationError> {
+    let invalid = || TransformationError::InvalidInput(value.to_string(), format.to_string());
+
+    // Runs of digits and runs of letters; everything else separates them.
+    let mut tokens: Vec<&str> = Vec::new();
+    let mut start = None;
+    let mut chars = value.char_indices().peekable();
+    while let Some((i, c)) = chars.next() {
+        if !c.is_alphanumeric() {
+            continue;
+        }
+        let begin = *start.get_or_insert(i);
+        let run_ends = match chars.peek() {
+            Some((_, next)) => {
+                !next.is_alphanumeric() || next.is_ascii_digit() != c.is_ascii_digit()
+            }
+            None => true,
+        };
+        if run_ends {
+            tokens.push(&value[begin..i + c.len_utf8()]);
+            start = None;
+        }
+    }
+    // "30th", "1st", and the "of" in "30th of September".
+    tokens.retain(|token| {
+        !["st", "nd", "rd", "th", "of"]
+            .iter()
+            .any(|filler| token.eq_ignore_ascii_case(filler))
+    });
+    if tokens.len() != parts.len() {
+        return Err(invalid());
+    }
+
+    let (mut day, mut month, mut year) = (None, None, None);
+    for (token, part) in tokens.iter().zip(parts) {
+        let number = || token.parse::<u32>().ok();
+        match part {
+            DatePart::Day => day = Some(number().filter(|_| token.len() <= 2).ok_or_else(invalid)?),
+            DatePart::Month => {
+                month = Some(number().filter(|_| token.len() <= 2).ok_or_else(invalid)?)
+            }
+            DatePart::MonthName => month = Some(month_number(token).ok_or_else(invalid)?),
+            DatePart::Year => {
+                year = Some(match token.len() {
+                    4 => number().ok_or_else(invalid)?,
+                    1 | 2 => 2000 + number().ok_or_else(invalid)?,
+                    _ => return Err(invalid()),
+                })
+            }
+        }
+    }
+
+    let month = month.filter(|m| (1..=12).contains(m)).ok_or_else(invalid)?;
+    if let Some(day) = day {
+        if day == 0 || day > days_in_month(month, year) {
+            return Err(invalid());
+        }
+    }
+    Ok(match (year, day) {
+        (Some(year), Some(day)) => format!("{year:04}-{month:02}-{day:02}"),
+        (Some(year), None) => format!("{year:04}-{month:02}"),
+        (None, Some(day)) => format!("--{month:02}-{day:02}"),
+        (None, None) => return Err(invalid()),
+    })
+}
+
+/// A date written month first, by name: `ixt:date-monthname-day-year-en`.
 ///
 /// ## Examples
 /// - "August 22, 2025" → "2025-08-22"
-/// - "November 29, 2021" → "2021-11-29"
+/// - "Sept. 30, 2025" → "2025-09-30"
 pub fn date_month_day_year_en(value: &str) -> Result<String, TransformationError> {
-    static DATE_REGEX: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"(?i)^(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2}),?\s+(\d{4})$").unwrap()
-    });
-
-    let input = value.trim();
-
-    if let Some(caps) = DATE_REGEX.captures(input) {
-        let month_str = caps.get(1).unwrap().as_str().to_lowercase();
-        let day: u32 = caps.get(2).unwrap().as_str().parse().map_err(|_| {
-            TransformationError::InvalidInput(
-                value.to_string(),
-                "date_month_day_year_en".to_string(),
-            )
-        })?;
-        let year: u32 = caps.get(3).unwrap().as_str().parse().map_err(|_| {
-            TransformationError::InvalidInput(
-                value.to_string(),
-                "date_month_day_year_en".to_string(),
-            )
-        })?;
-
-        let month = match month_str.as_str() {
-            "january" => 1,
-            "february" => 2,
-            "march" => 3,
-            "april" => 4,
-            "may" => 5,
-            "june" => 6,
-            "july" => 7,
-            "august" => 8,
-            "september" => 9,
-            "october" => 10,
-            "november" => 11,
-            "december" => 12,
-            _ => {
-                return Err(TransformationError::InvalidInput(
-                    value.to_string(),
-                    "date_month_day_year_en".to_string(),
-                ));
-            }
-        };
-
-        Ok(format!("{:04}-{:02}-{:02}", year, month, day))
-    } else {
-        Err(TransformationError::InvalidInput(
-            value.to_string(),
-            "date_month_day_year_en".to_string(),
-        ))
-    }
+    use DatePart::*;
+    read_date(value, "date-monthname-day-year-en", &[MonthName, Day, Year])
 }
 
 /// Converts quarter notation to end-of-quarter date
@@ -823,11 +976,10 @@ fn format_duration(
 
     let mut result = format!("{}P", sign);
 
-    // Add year/month/day components
+    // The unit the value was given in is always written, even when the
+    // value is under one of them: 0.9 years is `P0Y10M24D`, as EDGAR has it.
     if let Some(y) = years {
-        if y != 0 {
-            result.push_str(&format!("{}Y", y));
-        }
+        result.push_str(&format!("{}Y", y));
     }
 
     if let Some(m) = months {
@@ -1078,78 +1230,274 @@ static IXT_SEC_REGISTRY: Lazy<TransformationRegistry> = Lazy::new(|| {
     m
 });
 
-// Standard transformations (ixt namespace, v4 registry)
-static IXT_REGISTRY_V4: Lazy<TransformationRegistry> = Lazy::new(|| {
-    let mut m = HashMap::new();
-    m.insert("fixed-false", fixed_false as Transformation);
-    m.insert("fixed-true", fixed_true as Transformation);
-    m.insert("fixed-zero", fixed_zero as Transformation);
-    m.insert("zerodash", zero_dash as Transformation);
-    m.insert("zero-dash", zero_dash as Transformation); // Alternative spelling
-    m.insert("num-dot-decimal", num_dot_decimal as Transformation);
-    m.insert("numdotdecimal", num_dot_decimal as Transformation); // Spelling variant
-    m.insert("booleanfalse", boolean_false as Transformation);
-    m.insert("booleantrue", boolean_true as Transformation);
-    m.insert(
-        "date-monthname-day-year-en",
-        date_month_day_year_en as Transformation,
+/// The Transformation Rules Registry (`ixt:`), under the hyphenated names of
+/// versions 4 and 5 and the run-together names of versions 1 to 3.
+static IXT_REGISTRY: Lazy<TransformationRegistry> = Lazy::new(|| {
+    use DatePart::*;
+
+    /// Registers a date rule under each of its names.
+    macro_rules! date {
+        ($m:ident, $parts:tt, $($name:literal),+) => {
+            $($m.insert($name, (|value| read_date(value, $name, &$parts)) as Transformation);)+
+        };
+    }
+
+    let mut m: TransformationRegistry = HashMap::new();
+    for (name, rule) in [
+        ("fixed-false", fixed_false as Transformation),
+        ("booleanfalse", boolean_false),
+        ("fixed-true", fixed_true),
+        ("booleantrue", boolean_true),
+        ("fixed-zero", fixed_zero),
+        ("zero-dash", zero_dash),
+        ("zerodash", zero_dash),
+        ("fixed-empty", fixed_empty),
+        ("nocontent", fixed_empty),
+        ("num-dot-decimal", num_dot_decimal),
+        ("numdotdecimal", num_dot_decimal),
+        ("num-dot-decimal-in", num_dot_decimal),
+        ("numdotdecimalin", num_dot_decimal),
+        ("num-dot-decimal-apos", num_dot_decimal),
+        ("num-comma-decimal", num_comma_decimal),
+        ("numcommadecimal", num_comma_decimal),
+        ("num-comma-decimal-apos", num_comma_decimal),
+        ("num-unit-decimal", num_unit_decimal),
+        ("numunitdecimal", num_unit_decimal),
+        ("num-unit-decimal-apos", num_unit_decimal),
+        ("numunitdecimalin", num_unit_decimal),
+        ("date-monthname-day-year-en", date_month_day_year_en),
+        ("datemonthdayyearen", date_month_day_year_en),
+    ] {
+        m.insert(name, rule);
+    }
+
+    date!(
+        m,
+        [Day, MonthName, Year],
+        "date-day-monthname-year-en",
+        "datedaymonthyearen"
     );
-    m.insert(
-        "datemonthdayyearen",
-        date_month_day_year_en as Transformation,
-    ); // Alternative spelling
+    date!(
+        m,
+        [Year, MonthName, Day],
+        "date-year-monthname-day-en",
+        "dateyearmonthdayen"
+    );
+    date!(
+        m,
+        [Month, Day, Year],
+        "date-month-day-year",
+        "datemonthdayyear"
+    );
+    date!(
+        m,
+        [Day, Month, Year],
+        "date-day-month-year",
+        "datedaymonthyear"
+    );
+    date!(
+        m,
+        [Year, Month, Day],
+        "date-year-month-day",
+        "dateyearmonthday"
+    );
+    date!(
+        m,
+        [MonthName, Day],
+        "date-monthname-day-en",
+        "datemonthdayen"
+    );
+    date!(
+        m,
+        [Day, MonthName],
+        "date-day-monthname-en",
+        "datedaymonthen"
+    );
+    date!(m, [Month, Day], "date-month-day", "datemonthday");
+    date!(m, [Day, Month], "date-day-month", "datedaymonth");
+    date!(
+        m,
+        [MonthName, Year],
+        "date-monthname-year-en",
+        "datemonthyearen"
+    );
+    date!(
+        m,
+        [Year, MonthName],
+        "date-year-monthname-en",
+        "dateyearmonthen"
+    );
+    date!(m, [Month, Year], "date-month-year", "datemonthyear");
+    date!(m, [Year, Month], "date-year-month");
     m
 });
 
-/// Applies a transformation to a value based on its format string.
+/// Applies the transformation a `format` attribute names to the text of an
+/// inline fact.
 ///
-/// The format string is expected to be in the format `prefix:localname`,
-/// where prefix identifies the transformation registry (e.g., "ixt-sec", "ixt").
+/// `format` is `prefix:name`. The prefix chooses the registry — `ixt-sec` for
+/// the SEC's, `ixt` for the Transformation Rules Registry, with or without
+/// the version suffix some filings add (`ixt4:`).
 ///
-/// ## Arguments
-/// - `value`: The raw text value from the iXBRL document
-/// - `format`: The transformation format (e.g., "ixt-sec:numwordsen")
+/// A format this module does not know returns the text unchanged. A rule
+/// that cannot read the text returns [`TransformationError::InvalidInput`];
+/// the parser then keeps the text as the filing shows it.
 ///
-/// ## Returns
-/// - `Ok(String)`: The normalized value
-/// - `Err(TransformationError)`: If transformation fails
-///
-/// ## Examples
 /// ```
 /// use xbrlkit::transformations::apply_transformation;
 ///
-/// let result = apply_transformation("one", "ixt-sec:numwordsen");
-/// assert_eq!(result.unwrap(), "1");
+/// assert_eq!(apply_transformation("1,000", "ixt:num-dot-decimal").unwrap(), "1000");
+/// assert_eq!(apply_transformation("one", "ixt-sec:numwordsen").unwrap(), "1");
+/// assert_eq!(apply_transformation("Sept. 30, 2025", "ixt:date-monthname-day-year-en").unwrap(), "2025-09-30");
+/// assert_eq!(apply_transformation("December 31", "ixt:date-monthname-day-en").unwrap(), "--12-31");
 ///
-/// let result = apply_transformation("1,000", "ixt:num-dot-decimal");
-/// assert_eq!(result.unwrap(), "1000");
+/// // Unknown formats pass through.
+/// assert_eq!(apply_transformation("as is", "ixt:not-a-format").unwrap(), "as is");
 /// ```
 pub fn apply_transformation(value: &str, format: &str) -> Result<String, TransformationError> {
-    let parts: Vec<&str> = format.split(':').collect();
-    if parts.len() != 2 {
-        // Not a namespaced format, return original value
+    let Some((prefix, name)) = format.split_once(':') else {
         return Ok(value.to_string());
-    }
-    let prefix = parts[0];
-    let name = parts[1];
-
-    let registry = match prefix {
-        "ixt-sec" => &*IXT_SEC_REGISTRY,
-        "ixt" => &*IXT_REGISTRY_V4,
-        _ => return Ok(value.to_string()), // Unknown registry, pass through
     };
 
-    if let Some(transformer) = registry.get(name) {
-        transformer(value)
+    let registry = if prefix.starts_with("ixt-sec") {
+        &*IXT_SEC_REGISTRY
+    } else if prefix.starts_with("ixt") {
+        &*IXT_REGISTRY
     } else {
-        // Transformation not found in the registry, pass through
-        Ok(value.to_string())
+        return Ok(value.to_string());
+    };
+
+    match registry.get(name) {
+        Some(rule) => rule(value),
+        None => Ok(value.to_string()),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dates_are_read_whatever_separates_their_parts() {
+        let date = |value, format| apply_transformation(value, format).unwrap();
+
+        assert_eq!(
+            date("December 31, 2025", "ixt:date-monthname-day-year-en"),
+            "2025-12-31"
+        );
+        assert_eq!(
+            date("Sept. 30, 2025", "ixt:date-monthname-day-year-en"),
+            "2025-09-30"
+        );
+        assert_eq!(date("DEC 1 2025", "ixt:datemonthdayyearen"), "2025-12-01");
+        assert_eq!(
+            date("31 December 2025", "ixt:date-day-monthname-year-en"),
+            "2025-12-31"
+        );
+        assert_eq!(
+            date("30th of June, 2026", "ixt:date-day-monthname-year-en"),
+            "2026-06-30"
+        );
+        assert_eq!(date("9/21/2018", "ixt:date-month-day-year"), "2018-09-21");
+        assert_eq!(date("12/1/23", "ixt:date-month-day-year"), "2023-12-01");
+        assert_eq!(date("21.09.2018", "ixt:date-day-month-year"), "2018-09-21");
+        assert_eq!(date("2018/09/21", "ixt:date-year-month-day"), "2018-09-21");
+    }
+
+    #[test]
+    fn a_date_without_a_year_or_a_day_is_a_partial_date() {
+        let date = |value, format| apply_transformation(value, format).unwrap();
+
+        assert_eq!(date("December 31", "ixt:date-monthname-day-en"), "--12-31");
+        assert_eq!(date("31 Dec", "ixt:date-day-monthname-en"), "--12-31");
+        assert_eq!(date("12-31", "ixt:date-month-day"), "--12-31");
+        assert_eq!(date("1/31", "ixt:date-month-day"), "--01-31");
+        assert_eq!(date("31/1", "ixt:date-day-month"), "--01-31");
+        assert_eq!(date("February 29", "ixt:date-monthname-day-en"), "--02-29");
+        assert_eq!(
+            date("January 2028", "ixt:date-monthname-year-en"),
+            "2028-01"
+        );
+        assert_eq!(
+            date("2028 January", "ixt:date-year-monthname-en"),
+            "2028-01"
+        );
+        assert_eq!(date("06/2027", "ixt:date-month-year"), "2027-06");
+    }
+
+    #[test]
+    fn text_that_is_not_the_date_a_format_expects_is_refused() {
+        for (value, format) in [
+            ("as of December 31, 2025", "ixt:date-monthname-day-year-en"),
+            ("December 2025", "ixt:date-monthname-day-year-en"),
+            ("Smarch 31, 2025", "ixt:date-monthname-day-year-en"),
+            ("February 30, 2025", "ixt:date-monthname-day-year-en"),
+            ("February 29, 2025", "ixt:date-monthname-day-year-en"),
+            ("13/31/2025", "ixt:date-month-day-year"),
+            ("12/31/202", "ixt:date-month-day-year"),
+            ("", "ixt:date-month-day"),
+        ] {
+            assert!(
+                apply_transformation(value, format).is_err(),
+                "{value:?} should not read as {format}"
+            );
+        }
+        // A leap day is a day in a leap year.
+        assert_eq!(
+            apply_transformation("February 29, 2024", "ixt:date-monthname-day-year-en").unwrap(),
+            "2024-02-29"
+        );
+    }
+
+    #[test]
+    fn numbers_lose_their_separators_under_either_convention() {
+        let number = |value, format| apply_transformation(value, format).unwrap();
+
+        assert_eq!(number("1,234,567.89", "ixt:num-dot-decimal"), "1234567.89");
+        assert_eq!(number("1 234 567.89", "ixt:numdotdecimal"), "1234567.89");
+        assert_eq!(number("1,00,000.5", "ixt:num-dot-decimal-in"), "100000.5");
+        assert_eq!(number("1'234.5", "ixt:num-dot-decimal-apos"), "1234.5");
+        assert_eq!(
+            number("1.234.567,89", "ixt:num-comma-decimal"),
+            "1234567.89"
+        );
+        assert_eq!(number("1 234,5", "ixt:numcommadecimal"), "1234.5");
+        assert_eq!(number("3 dollars 50 cents", "ixt:num-unit-decimal"), "3.50");
+        assert_eq!(
+            number("1,234 dollars and 5 cents", "ixt:num-unit-decimal"),
+            "1234.05"
+        );
+        assert_eq!(number("anything", "ixt:fixed-empty"), "");
+    }
+
+    #[test]
+    fn a_registry_prefix_may_carry_its_version() {
+        assert_eq!(
+            apply_transformation("1,000", "ixt4:num-dot-decimal").unwrap(),
+            "1000"
+        );
+        assert_eq!(
+            apply_transformation("one", "ixt-sec1:numwordsen").unwrap(),
+            "1"
+        );
+        assert_eq!(
+            apply_transformation("1,000", "other:num-dot-decimal").unwrap(),
+            "1,000"
+        );
+        assert_eq!(
+            apply_transformation("1,000", "num-dot-decimal").unwrap(),
+            "1,000"
+        );
+    }
+
+    #[test]
+    fn a_duration_under_one_year_still_states_its_years() {
+        assert_eq!(dur_year("0.9").unwrap(), "P0Y10M24D");
+        assert_eq!(dur_year("0.1").unwrap(), "P0Y1M6D");
+        assert_eq!(dur_year("2.25").unwrap(), "P2Y3M");
+        assert_eq!(dur_year("10").unwrap(), "P10Y");
+        assert_eq!(dur_year("0").unwrap(), "P0Y");
+    }
 
     #[test]
     fn test_bool_ballot_box() {

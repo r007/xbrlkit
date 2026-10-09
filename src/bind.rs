@@ -7,10 +7,10 @@
 //! filled.
 //!
 //! ```text
-//!   Instance (contexts, units, facts)          <- parser.rs: everything the filing tags
+//!   Instance (contexts, units, facts)      <- parser: everything the filing tags
 //!           │
 //!           ▼
-//!   Document                         <- indexed once per document
+//!   Document                                <- indexed once per filing
 //!           │
 //!           │  extract::<T>()               <- T: FromXbrl, derived
 //!           ▼
@@ -23,17 +23,66 @@
 //!           └─ #[xbrl(each_period)]     field: Vec<OtherStruct>   one scope per period
 //! ```
 //!
-//! ## Why this is not serde
+//! ## Describing a view
 //!
-//! The binding used to be `#[serde(rename = "us-gaap:Assets")]`, read by a
-//! custom `Deserializer`. A serde name is the field's name in *every* format,
-//! so the concept became the Parquet column; and a rename split by direction
-//! cannot fix that, because `serde_arrow` derives a schema from the
-//! deserialize names and writes with the serialize names — the columns come out
-//! null. `alias` fails differently: serde rejects a second key for a field it
-//! has already seen, so a fallback concept worked only while the filing tagged
-//! one of the two. Nor does serde have anywhere to say *which* fact a field
-//! wants. So the binding has its own attribute, and serde keeps the Rust names.
+//! ```
+//! use serde::Serialize;
+//! use xbrlkit::{Fact, FromXbrl};
+//!
+//! #[derive(Debug, Default, Serialize, FromXbrl)]
+//! #[xbrl(instant)]
+//! struct BalanceSheet {
+//!     /// The date the figures are as of.
+//!     #[xbrl(period_end)]
+//!     as_of: Option<String>,
+//!
+//!     #[xbrl(concept = "us-gaap:Assets")]
+//!     assets: Option<f64>,
+//!
+//!     /// The first concept the filing reports wins.
+//!     #[xbrl(
+//!         concept = "us-gaap:StockholdersEquity",
+//!         alias = "us-gaap:StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"
+//!     )]
+//!     equity: Option<f64>,
+//!
+//!     /// Every class of stock, each with its dimension members.
+//!     #[xbrl(concept = "us-gaap:CommonStockSharesOutstanding")]
+//!     shares_outstanding: Vec<Fact<f64>>,
+//! }
+//!
+//! #[derive(Debug, Default, Serialize, FromXbrl)]
+//! struct Report {
+//!     /// Field by field, the best the filing offers.
+//!     #[xbrl(nested)]
+//!     latest: BalanceSheet,
+//!
+//!     /// One balance sheet per date the filing reports, latest first.
+//!     #[xbrl(each_period)]
+//!     balance_sheets: Vec<BalanceSheet>,
+//! }
+//! ```
+//!
+//! ### Field attributes
+//!
+//! | Attribute                            | The field is                                             |
+//! | ------------------------------------ | -------------------------------------------------------- |
+//! | `concept = ".."` [, `alias = ".."`]… | read from these concepts, in order of preference         |
+//! | `nested`                             | another `FromXbrl` struct, read in the same scope        |
+//! | `each_period`                        | a `Vec` of a `FromXbrl` struct, one per reported period  |
+//! | `period_start` / `period_end`        | the dates of the period the struct was read for          |
+//! | *(none)*                             | left at its `Default`                                    |
+//!
+//! A concept written with its prefix (`us-gaap:Assets`) matches that concept;
+//! written bare (`Assets`) it matches the name under any prefix.
+//!
+//! What a `concept` field holds is decided by its type: see [`FromFacts`].
+//!
+//! ### Struct attributes
+//!
+//! `#[xbrl(instant)]` or `#[xbrl(duration)]` says which kind of period the
+//! struct's concepts are reported for, so that `each_period` does not produce
+//! a balance sheet for a quarter or an income statement for a date.
 //!
 //! ## Which fact a field gets
 //!
@@ -49,6 +98,22 @@
 //! the filing does not report for that period is `None`. That is the view to
 //! use when the period matters — a quarter's expenses rather than the year to
 //! date's.
+//!
+//! Where a filing prints one figure twice — exactly on the statement, rounded
+//! in a note — the more exact one is the value.
+//!
+//! ## Why the binding is not a serde rename
+//!
+//! `#[serde(rename = "us-gaap:Assets")]` with a custom `Deserializer` is the
+//! obvious design, and this crate started with it. A serde name is the
+//! field's name in *every* format, so the concept became the JSON key and the
+//! Parquet column; and a rename split by direction does not fix that, because
+//! tools that derive a schema from one direction and write with the other
+//! (`serde_arrow` does) come out with null columns. `alias` fails differently:
+//! serde rejects a second key for a field it has already seen, so a fallback
+//! concept worked only while a filing tagged one of the two. Nor does serde
+//! have anywhere to say *which* fact a field wants. So the binding has its own
+//! attribute, and serde keeps the Rust names.
 
 use crate::error::{Result, XbrlError};
 use crate::instance::{Context, Instance, RawFact, Unit, XbrlValue};
@@ -88,6 +153,7 @@ impl Span {
         }
     }
 
+    /// Whether this is a point in time rather than a span.
     pub fn is_instant(&self) -> bool {
         self.start.is_none()
     }
@@ -112,8 +178,11 @@ impl Span {
 /// the periods `#[xbrl(each_period)]` produces one for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PeriodKind {
+    /// No restriction: a struct mixing both kinds.
     Any,
+    /// Points in time: a balance sheet.
     Instant,
+    /// Spans of time: an income statement, a cash flow statement.
     Duration,
 }
 
@@ -145,6 +214,7 @@ pub struct Dimension {
 /// for — the shares outstanding of each class, say.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Fact<T> {
+    /// The value, converted to the field's type.
     pub value: T,
 
     /// First day of the period. `None` when the fact is as of a date.
@@ -238,9 +308,9 @@ struct Candidate<'a> {
 /// number and an absent or unreadable one below.
 ///
 /// A filing tags a figure wherever it prints it, and the notes print it
-/// rounded: the trust balance is `276,012,327` on the balance sheet
-/// (`decimals="0"`) and "$276.0 million" in a note (`decimals="-5"`), under one
-/// concept and one context. Between two such facts the exact one is the figure.
+/// rounded: a balance is `276,012,327` on the balance sheet (`decimals="0"`)
+/// and "$276.0 million" in a note (`decimals="-5"`), under one concept and one
+/// context. Between two such facts the exact one is the figure.
 ///
 /// It says nothing between facts in different contexts: a class with no shares
 /// outstanding is an exact `0`, and that is not a better count of another class.
@@ -613,8 +683,8 @@ impl Document {
 
     /// Reads `T` as [`extract`](Self::extract) does, but a value that does not
     /// convert leaves its field empty and is reported alongside, rather than
-    /// costing the whole struct. One filer tagging "N/A" as a number should
-    /// not lose a filing its balance sheet.
+    /// costing the whole struct. A filer tagging "N/A" as a number should not
+    /// lose the filing its balance sheet.
     pub fn extract_lenient<T: FromXbrl>(&self) -> (T, Vec<XbrlError>) {
         self.read(None)
     }
@@ -1033,8 +1103,8 @@ mod tests {
 
     #[test]
     fn balance_sheet_date_beats_prior_year_end_and_cover_page() {
-        // Two undimensioned instants either side of the reporting date: the
-        // shape that once made a 10-Q report its prior year end's total assets.
+        // Undimensioned instants either side of the reporting date: the shape
+        // that makes a naive reader report the prior year end's total assets.
         let data = q3_document(
             vec![
                 fact("us-gaap:Assets", "cover", "3"),
@@ -1166,8 +1236,8 @@ mod tests {
             "us-gaap:AssetsHeldInTrustNoncurrent",
             "us-gaap:AssetsHeldInTrust",
         ];
-        // Both tagged: the concept wins. With serde's `alias` this was a
-        // "duplicate field" error that cost the filing its whole struct.
+        // Both tagged: the concept wins. With serde's `alias` this is a
+        // "duplicate field" error that costs the filing its whole struct.
         assert_eq!(one::<Option<f64>>(&both, None, &concepts), Some(1.0));
 
         let only_alias = q3_document(
