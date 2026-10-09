@@ -79,7 +79,7 @@ use crate::transformations;
 use quick_xml::{
     Reader, Writer,
     de::from_str,
-    events::{BytesStart, Event},
+    events::{BytesRef, BytesStart, Event},
 };
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -132,7 +132,7 @@ fn local_part(tag_name: &str) -> &str {
 fn has_id_attribute(e: &BytesStart) -> bool {
     e.attributes()
         .flatten()
-        .any(|attr| attr.key.as_ref().eq_ignore_ascii_case(b"id"))
+        .any(|attr| attr.key.as_ref().eq_ignore_ascii_case("id"))
 }
 
 /// Parses a traditional XBRL instance document.
@@ -174,13 +174,12 @@ pub fn parse_xml(xml_content: &str) -> Result<Instance> {
             .map_err(XbrlError::malformed)?
         {
             Event::Start(e) => {
-                let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                let tag_name = e.name().as_ref().to_string();
                 if is_xbrl_root_element(&tag_name) {
                     // Use the generic event processor, breaking when we find the closing </xbrl> tag.
                     process_events(&mut reader, &mut xbrl, false, |event| {
                         if let Event::End(end_event) = event {
-                            let end_tag_name =
-                                String::from_utf8_lossy(end_event.name().as_ref()).to_string();
+                            let end_tag_name = end_event.name().as_ref().to_string();
                             return is_xbrl_root_element(&end_tag_name);
                         }
                         false
@@ -355,12 +354,19 @@ fn resolve_entity(entity: &str) -> Option<&'static str> {
     })
 }
 
-/// Decodes a text node, falling back to the raw bytes when it holds an entity
-/// nobody recognises.
-fn decode_text(text: &quick_xml::events::BytesText) -> String {
-    text.unescape_with(resolve_entity)
-        .unwrap_or_else(|_| Cow::Owned(String::from_utf8_lossy(text.as_ref()).into_owned()))
-        .into_owned()
+/// Decodes an entity or character reference, keeping the literal `&name;`
+/// for an entity nobody recognises.
+///
+/// quick-xml delivers references as events of their own, between the text
+/// nodes around them.
+fn decode_reference(reference: &BytesRef) -> Cow<'static, str> {
+    if let Ok(Some(c)) = reference.resolve_char_ref() {
+        return Cow::Owned(c.to_string());
+    }
+    match resolve_entity(reference) {
+        Some(resolved) => Cow::Borrowed(resolved),
+        None => Cow::Owned(format!("&{};", &**reference)),
+    }
 }
 
 /// Reads one attribute by name, ignoring case.
@@ -368,8 +374,8 @@ fn attribute(e: &BytesStart, lowercase_name: &str) -> Option<String> {
     e.attributes().flatten().find_map(|attr| {
         attr.key
             .as_ref()
-            .eq_ignore_ascii_case(lowercase_name.as_bytes())
-            .then(|| String::from_utf8_lossy(&attr.value).into_owned())
+            .eq_ignore_ascii_case(lowercase_name)
+            .then(|| attr.value.clone().into_owned())
     })
 }
 
@@ -443,10 +449,11 @@ fn read_inline_content(
             .read_event_into(&mut buf)
             .map_err(XbrlError::malformed)?
         {
-            Event::Text(chunk) => text.push_str(&decode_text(&chunk)),
-            Event::CData(chunk) => text.push_str(&String::from_utf8_lossy(chunk.as_ref())),
+            Event::Text(chunk) => text.push_str(&chunk),
+            Event::GeneralRef(reference) => text.push_str(&decode_reference(&reference)),
+            Event::CData(chunk) => text.push_str(&chunk),
             Event::Start(child) => {
-                let tag = String::from_utf8_lossy(child.name().as_ref()).to_lowercase();
+                let tag = child.name().as_ref().to_lowercase();
 
                 if is_inline_fact_tag(&tag) {
                     let nested = read_inline_fact(&child, &tag, reader, xbrl, inline)?;
@@ -466,7 +473,7 @@ fn read_inline_content(
                 }
             }
             Event::End(end) => {
-                let tag = String::from_utf8_lossy(end.name().as_ref()).to_lowercase();
+                let tag = end.name().as_ref().to_lowercase();
                 if tag == lowercase_end_tag {
                     if same_name_depth == 0 {
                         break;
@@ -671,7 +678,7 @@ where
 
         match event {
             Event::Start(e) => {
-                let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                let tag_name = e.name().as_ref().to_string();
                 let lowercase_tag = tag_name.to_lowercase();
 
                 // First, try to handle it as a metadata tag (context, unit) or a link tag.
@@ -714,7 +721,7 @@ where
                 // Otherwise, ignore HTML container tags and other non-XBRL tags
             }
             Event::Empty(e) => {
-                let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                let tag_name = e.name().as_ref().to_string();
                 handle_empty_event(xbrl, e, tag_name);
             }
             Event::Eof => break,
@@ -745,36 +752,48 @@ fn handle_start_event(
             .read_to_end_into(e.name(), &mut Vec::new())
             .map_err(XbrlError::malformed)?;
     } else {
-        // Extract text content and infer type
-        let mut text_buf = Vec::new();
-        match reader
-            .read_event_into(&mut text_buf)
-            .map_err(XbrlError::malformed)?
-        {
-            Event::Text(text) => {
-                let value_str = text.unescape().map_err(XbrlError::malformed)?.into_owned();
-                fact.value = parse_typed_value(&value_str);
-                // Consume the closing tag
-                reader
-                    .read_to_end_into(e.name(), &mut Vec::new())
-                    .map_err(XbrlError::malformed)?;
-            }
-            Event::End(end_tag) if end_tag.name() == e.name() => {
-                // Empty element (no text content) is considered Nil
-                fact.value = XbrlValue::Nil;
-            }
-            _ => {
-                // Complex content - skip for now
-                reader
-                    .read_to_end_into(e.name(), &mut Vec::new())
-                    .map_err(XbrlError::malformed)?;
-            }
-        }
+        // Extract text content and infer type. A reference splits the text
+        // into several events, so the pieces are gathered up to the end tag,
+        // and whitespace is trimmed only once they are joined.
+        reader.config_mut().trim_text(false);
+        let content = read_instance_text(reader, &e);
+        reader.config_mut().trim_text(true);
+        // `None`: the element holds elements of its own.
+        fact.value = match content? {
+            Some(text) => parse_typed_value(text.trim()),
+            None => XbrlValue::Nil,
+        };
     }
 
     xbrl.facts.push(fact);
 
     Ok(())
+}
+
+/// Gathers the text of an instance fact, consuming its end tag. `None` when
+/// the element holds elements of its own, which are skipped.
+fn read_instance_text(reader: &mut Reader<&[u8]>, e: &BytesStart) -> Result<Option<String>> {
+    let mut text = String::new();
+    let mut buf = Vec::new();
+    loop {
+        buf.clear();
+        match reader
+            .read_event_into(&mut buf)
+            .map_err(XbrlError::malformed)?
+        {
+            Event::Text(chunk) => text.push_str(&chunk),
+            Event::CData(chunk) => text.push_str(&chunk),
+            Event::GeneralRef(reference) => text.push_str(&decode_reference(&reference)),
+            Event::End(_) => return Ok(Some(text)),
+            Event::Start(_) | Event::Empty(_) | Event::Eof => {
+                reader
+                    .read_to_end_into(e.name(), &mut Vec::new())
+                    .map_err(XbrlError::malformed)?;
+                return Ok(None);
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Reads a self-closing element as a fact with no value:
@@ -827,7 +846,7 @@ fn reconstruct_element(
             .map_err(XbrlError::malformed)?;
 
         match &event {
-            Event::End(e) if e.name().as_ref() == tag_name.as_bytes() && depth == 0 => {
+            Event::End(e) if e.name().as_ref() == tag_name && depth == 0 => {
                 // Found matching closing tag at root level
                 writer.write_event(event).map_err(XbrlError::malformed)?;
                 break;
@@ -915,8 +934,8 @@ fn parse_fact_attributes_common(e: &BytesStart, is_ixbrl: bool) -> (RawFact, Fac
 
     for attr in e.attributes().flatten() {
         // Convert attribute key to lowercase for case-insensitive matching
-        let key = String::from_utf8_lossy(attr.key.as_ref()).to_lowercase();
-        let value_str = String::from_utf8_lossy(&attr.value);
+        let key = attr.key.as_ref().to_lowercase();
+        let value_str = attr.value.clone();
 
         match key.as_str() {
             // Common attributes
@@ -1000,6 +1019,21 @@ mod tests {
         // Should treat empty or whitespace-only strings as Nil
         assert_eq!(parse_typed_value(""), XbrlValue::Nil);
         assert_eq!(parse_typed_value("   "), XbrlValue::Nil);
+    }
+
+    #[test]
+    fn references_inside_an_instance_fact_are_resolved() {
+        let xml = r#"<?xml version="1.0"?>
+        <xbrl xmlns="http://www.xbrl.org/2003/instance" xmlns:dei="http://xbrl.sec.gov/dei/2024">
+            <dei:EntityRegistrantName> Smith &amp; Sons&#160;Acquisition&nbsp;Corp </dei:EntityRegistrantName>
+        </xbrl>"#;
+
+        let instance = parse_xml(xml).unwrap();
+        let fact = &instance.facts[0];
+        assert_eq!(
+            fact.value,
+            XbrlValue::String("Smith & Sons\u{a0}Acquisition Corp".to_string())
+        );
     }
 
     #[test]

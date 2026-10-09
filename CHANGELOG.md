@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-09
+
+### Changed
+
+- Upgraded `quick-xml` from 0.37 to 0.42. Names and text are `&str` there, and
+  entity and character references arrive as events of their own, so the parser
+  joins the pieces around them. An instance fact whose text holds a reference
+  (`Smith &amp; Sons`) is read whole, and its whitespace is trimmed after the
+  join, not before
+
 ## [0.1.0] - 2026-10-09
 
 The first release as a crate of its own. The parser was written in 2025 inside
@@ -43,5 +53,6 @@ history before this release is that crate's.
 - Explicit and typed dimension members on contexts, and `Fact::dimensions`
 - The `derive` and `taxonomies` features, both on by default
 
-[Unreleased]: https://github.com/r007/xbrlkit/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/r007/xbrlkit/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/r007/xbrlkit/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/r007/xbrlkit/releases/tag/v0.1.0
