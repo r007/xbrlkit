@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Corrected the minimum supported Rust version to 1.86, as required by
+  `quick-xml` 0.42, and passed it as an explicit CI toolchain input so Dependabot
+  cannot upgrade it as an action version
+
 ## [0.1.1] - 2026-10-09
 
 ### Changed

@@ -54,7 +54,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 xbrlkit = "0.1"
 ```
 
-Rust 1.85 or later.
+Rust 1.86 or later.
 
 ## Why
 

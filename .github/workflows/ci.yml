@@ -36,11 +36,14 @@ jobs:
       - run: cargo package --workspace --allow-dirty
 
   msrv:
-    name: Rust 1.85
+    name: Rust 1.86
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.120
+      # Keep the MSRV separate from the action revision so Dependabot cannot bump it.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.86.0'
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace --all-features
 
